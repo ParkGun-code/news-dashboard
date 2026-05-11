@@ -293,7 +293,7 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
 # 메인 헤더 (모던 텍스트 기반)
 # ==========================================
 st.markdown("<div class='main-header'>국토교통부 대전지방국토관리청 실시간 뉴스 모니터링</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>개발 및 유지보수: 국토교통부 대전지방국토관리청 건설안전과 박건</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>국토교통부 대전지방국토관리청 건설안전과(p.gun)</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널 (검색 조건 설정)
