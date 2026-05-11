@@ -215,7 +215,7 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
 # 메인 헤더 및 상단 컨트롤 패널 (PC 웹사이트 스타일)
 # ==========================================
 st.title("🖥️ 국토교통부 대전지방국토관리청 실시간 뉴스 모니터링")
-st.caption("개발 및 유지보수: 국토교통부 대전지방국토관리청 건설안전과 PG")
+st.caption("국토교통부 대전지방국토관리청 건설안전과")
 
 # 검색 설정을 위한 상단 확장 패널
 with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 닫으세요)", expanded=True):
