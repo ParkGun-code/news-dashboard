@@ -126,20 +126,21 @@ class NewsScraper:
         self.naver_client_secret = naver_client_secret
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
 
-    def get_google_news_pool(self, keyword, limit=100):
-        query = keyword.replace('&', ' OR ') + " when:1d"
+    def get_google_news_pool(self, keyword, start_date, end_date, limit=200):
+        # 구글 RSS의 날짜 검색 기능 (after: / before: 문법 사용)
+        before_date = end_date + datetime.timedelta(days=1)
+        query = f"{keyword.replace('&', ' OR ')} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
         encoded_query = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
         
         feed = feedparser.parse(url)
         results = []
-        today_date = datetime.datetime.now(self.kst).date()
 
         for entry in feed.entries:
             try:
                 dt = parsedate_to_datetime(entry.published)
-                dt_kst = dt.astimezone(self.kst)
-                if dt_kst.date() != today_date:
+                dt_date = dt.astimezone(self.kst).date()
+                if not (start_date <= dt_date <= end_date):
                     continue
             except Exception:
                 pass
@@ -150,7 +151,7 @@ class NewsScraper:
             if len(results) >= limit: break
         return results
 
-    def get_naver_news_pool(self, keyword, limit=100):
+    def get_naver_news_pool(self, keyword, start_date, end_date, limit=200):
         if not self.naver_client_id or not self.naver_client_secret:
             return []
         query = keyword.replace('&', ' ')
@@ -160,10 +161,10 @@ class NewsScraper:
             "X-Naver-Client-Secret": self.naver_client_secret
         }
         results = []
-        today_date = datetime.datetime.now(self.kst).date()
 
-        for start in range(1, limit + 1, 100):
-            display = min(100, limit - start + 1)
+        # 네이버 API는 최대 1000개까지 제공하므로, 최대한 깊이 탐색하여 과거 기사를 획득합니다.
+        for start in range(1, 1001, 100):
+            display = min(100, 1001 - start)
             params = {"query": query, "display": display, "start": start, "sort": "date"}
             try:
                 response = requests.get(url, headers=headers, params=params)
@@ -175,11 +176,13 @@ class NewsScraper:
                 for item in items:
                     try:
                         dt = parsedate_to_datetime(item['pubDate'])
-                        dt_kst = dt.astimezone(self.kst)
-                        if dt_kst.date() < today_date:
-                            stop_fetching = True 
+                        dt_date = dt.astimezone(self.kst).date()
+                        # 지정된 종료일보다 최신 기사면 무시하고 다음 기사로 패스
+                        if dt_date > end_date:
                             continue
-                        elif dt_kst.date() > today_date:
+                        # 지정된 시작일보다 더 옛날 기사가 나오면 탐색을 완전히 종료
+                        elif dt_date < start_date:
+                            stop_fetching = True 
                             continue
                     except Exception:
                         pass
@@ -188,17 +191,17 @@ class NewsScraper:
                     description = item['description'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"').replace('&apos;', "'")
                     results.append({"title": title, "link": item['link'], "description": description})
                 
-                if stop_fetching: break
+                if stop_fetching or len(results) >= limit: break
             except Exception:
                 break
-        return results
+        return results[:limit]
 
-    def get_daum_news_pool(self, keyword, limit=100):
+    def get_daum_news_pool(self, keyword, start_date, end_date, limit=200):
         query = keyword.replace('&', ' ')
         encoded_query = urllib.parse.quote(query)
-        today_str = datetime.datetime.now(self.kst).strftime("%Y%m%d")
-        sd = f"{today_str}000000"
-        ed = f"{today_str}235959"
+        # 다음은 URL 변수로 정확하게 묶어서 검색할 수 있습니다.
+        sd = start_date.strftime("%Y%m%d") + "000000"
+        ed = end_date.strftime("%Y%m%d") + "235959"
         headers = {"User-Agent": "Mozilla/5.0"}
         results = []
         max_pages = math.ceil(limit / 10)
@@ -224,7 +227,7 @@ class NewsScraper:
                 break
         return results[:limit]
 
-def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, limit):
+def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, limit, start_date, end_date):
     portal_methods = {
         "네이버": scraper.get_naver_news_pool,
         "구글": scraper.get_google_news_pool,
@@ -236,7 +239,8 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     
     for portal_name in selected_portals:
         fetch_func = portal_methods[portal_name]
-        news_pool = fetch_func(keyword, limit=100)
+        # 기간에 맞춰 여유롭게 탐색 후 필터링 진행
+        news_pool = fetch_func(keyword, start_date, end_date, limit=200)
         
         seen_links = set()
         for news in news_pool:
@@ -298,7 +302,7 @@ st.markdown("<div class='sub-header'>Contact me by email in case of any issues.(
 # ==========================================
 # 상단 컨트롤 패널 (검색 조건 설정)
 # ==========================================
-with st.expander("검색 조건 설정", expanded=True):
+with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 닫으세요)", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
         selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], default=["네이버", "구글", "다음"])
@@ -308,17 +312,45 @@ with st.expander("검색 조건 설정", expanded=True):
 
     st.write("") # 간격 띄우기
 
-    col3, col4, col5, col6 = st.columns([3, 1, 1, 1])
+    col3, col4, col5 = st.columns([3, 1, 2])
     with col3:
         keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "사건, 사고, 화재, 붕괴, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col5:
-        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
+        period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"])
+
+    col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
+        # 기간 선택 시 달력 입력창 등장, 아닐 경우 텍스트로 적용된 기간 표시
+        if period_combo == "기간 선택":
+            date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
+                                       value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today()),
+                                       max_value=datetime.date.today())
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                start_date, end_date = date_range
+            elif isinstance(date_range, tuple) and len(date_range) == 1:
+                start_date = end_date = date_range[0]
+            else:
+                start_date = end_date = datetime.date.today()
+        else:
+            end_date = datetime.date.today()
+            if period_combo == "오늘":
+                start_date = end_date
+            elif period_combo == "일주일":
+                start_date = end_date - datetime.timedelta(days=7)
+            elif period_combo == "한달":
+                start_date = end_date - datetime.timedelta(days=30)
+            elif period_combo == "일년":
+                start_date = end_date - datetime.timedelta(days=365)
+            
+            st.text_input("적용된 기간 (자동 계산됨)", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
+
+    with col7:
+        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
+    with col8:
         if refresh_combo == "기타":
-            custom_time = st.number_input("갱신(분)", min_value=1, value=15)
-            refresh_minutes = custom_time
+            refresh_minutes = st.number_input("갱신(분)", min_value=1, value=15)
         elif refresh_combo != "사용 안함":
             refresh_minutes = int(refresh_combo.replace("분", ""))
         else:
@@ -356,10 +388,10 @@ if do_search:
         naver_client_secret="3Yx_9guJfU"
     )
 
-    with st.spinner("웹 서버에서 실시간 기사를 수집하고 있습니다..."):
+    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 실시간 기사를 수집하고 있습니다..."):
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit): kw for kw in keywords}
+            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date): kw for kw in keywords}
             for future in concurrent.futures.as_completed(future_to_kw):
                 kw = future_to_kw[future]
                 try:
@@ -384,7 +416,7 @@ if do_search:
                         st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
                         
                         if not news_list:
-                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
+                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
                             for news in news_list:
                                 title = news['title']
