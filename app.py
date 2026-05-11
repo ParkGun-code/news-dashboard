@@ -9,35 +9,113 @@ import feedparser
 import concurrent.futures
 
 # --- 웹페이지 기본 설정 (PC 와이드 화면에 최적화) ---
-st.set_page_config(page_title="종합 뉴스 실시간 대시보드", page_icon="🖥️", layout="wide")
+st.set_page_config(page_title="뉴스 모니터링 시스템", layout="wide")
 
-# --- 깔끔한 웹사이트 디자인을 위한 커스텀 CSS ---
+# --- 🎨 엔터프라이즈급 모던/세련된 커스텀 CSS ---
 st.markdown("""
     <style>
+    /* 기본 스트림릿 메뉴 숨김 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    
+    /* 전체 레이아웃 여백 조정 */
     .block-container {
-        padding-top: 2rem;
+        padding-top: 2.5rem;
         padding-bottom: 2rem;
+        max-width: 1400px;
+    }
+
+    /* 메인 타이틀 및 서브 타이틀 디자인 */
+    .main-header {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1e293b;
+        letter-spacing: -0.5px;
+        margin-bottom: 5px;
+    }
+    .sub-header {
+        font-size: 14px;
+        color: #64748b;
+        margin-bottom: 30px;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 15px;
+    }
+
+    /* 검색 버튼(Primary)을 세련된 블루톤으로 강제 변경 */
+    button[kind="primary"] {
+        background-color: #2563eb !important; /* 차분한 블루 */
+        color: white !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 600 !important;
+        padding: 0.5rem 1rem !important;
+        transition: all 0.2s ease !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #1d4ed8 !important; /* 호버 시 조금 더 짙은 블루 */
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+    }
+
+    /* 멀티셀렉트 선택된 태그 색상을 파스텔톤/무채색으로 강제 변경 */
+    span[data-baseweb="tag"] {
+        background-color: #f1f5f9 !important;
+        color: #334155 !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 4px !important;
+        font-size: 13px !important;
+    }
+
+    /* 뉴스 항목 개별 텍스트 및 링크 스타일 */
+    .news-item {
+        padding: 8px 0;
+        border-bottom: 1px dashed #f1f5f9;
+    }
+    .news-item:last-child {
+        border-bottom: none;
+    }
+    .news-meta {
+        font-size: 12px;
+        color: #64748b;
+        margin-right: 6px;
     }
     .news-link {
         text-decoration: none;
-        color: #1F2937;
+        color: #334155;
         font-size: 14px;
-        display: block;
-        padding: 4px 0;
+        font-weight: 500;
+        display: inline-block;
+        width: 100%;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        vertical-align: middle;
+        transition: color 0.2s ease;
     }
     .news-link:hover {
-        color: #2563EB;
+        color: #2563eb;
         text-decoration: underline;
     }
-    .urgent-news {
-        color: #DC2626 !important;
-        font-weight: bold;
+    
+    /* 긴급 뉴스 하이라이트 (너무 쨍하지 않은 레드) */
+    .urgent-tag {
+        color: #e11d48;
+        font-weight: 700;
+        font-size: 12px;
+        margin-right: 4px;
+    }
+    .urgent-link {
+        color: #be123c !important;
+    }
+    
+    /* 대시보드 카드 제목 */
+    .card-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 12px;
+        padding-left: 8px;
+        border-left: 4px solid #3b82f6;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -212,44 +290,49 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     return (urgent_news + mixed_normal)[:limit]
 
 # ==========================================
-# 메인 헤더 및 상단 컨트롤 패널 (PC 웹사이트 스타일)
+# 메인 헤더 (모던 텍스트 기반)
 # ==========================================
-st.title("🖥️ 국토교통부 대전지방국토관리청 실시간 뉴스 모니터링")
-st.caption("국토교통부 대전지방국토관리청 건설안전과")
+st.markdown("<div class='main-header'>국토교통부 대전지방국토관리청 실시간 뉴스 모니터링</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>개발 및 유지보수: 국토교통부 대전지방국토관리청 건설안전과 박건</div>", unsafe_allow_html=True)
 
-# 검색 설정을 위한 상단 확장 패널
-with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 닫으세요)", expanded=True):
+# ==========================================
+# 상단 컨트롤 패널 (검색 조건 설정)
+# ==========================================
+with st.expander("검색 조건 설정", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
-        selected_portals = st.multiselect("🌐 검색 포털", ["네이버", "구글", "다음"], default=["네이버", "구글", "다음"])
+        selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], default=["네이버", "구글", "다음"])
     with col2:
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
-        selected_regions = st.multiselect("📍 검색 지역 (비워두면 전체 기사 검색)", all_regions, default=["대전", "충남"])
+        selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, default=["대전", "충남"])
+
+    st.write("") # 간격 띄우기
 
     col3, col4, col5, col6 = st.columns([3, 1, 1, 1])
     with col3:
-        keywords_str = st.text_input("🔍 검색어 (쉼표 구분)", "사건, 사고, 화재, 붕괴, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "사건, 사고, 화재, 붕괴, 지진")
     with col4:
-        display_limit = st.number_input("📄 출력 개수", min_value=1, max_value=100, value=15)
+        display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col5:
-        refresh_combo = st.selectbox("⏱ 자동 갱신", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
+        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
     with col6:
         if refresh_combo == "기타":
-            custom_time = st.number_input("기타 시간(분)", min_value=1, value=15)
+            custom_time = st.number_input("갱신(분)", min_value=1, value=15)
             refresh_minutes = custom_time
         elif refresh_combo != "사용 안함":
             refresh_minutes = int(refresh_combo.replace("분", ""))
         else:
             refresh_minutes = 0
 
-    do_search = st.button("🚀 뉴스 검색 시작", type="primary", use_container_width=True)
+    st.write("")
+    do_search = st.button("뉴스 검색 실행", type="primary", use_container_width=True)
 
-# 자동 갱신 처리 (HTML Meta 태그 삽입 방식)
+# 자동 갱신 처리
 if refresh_minutes > 0 and do_search:
     st.markdown(f'<meta http-equiv="refresh" content="{refresh_minutes * 60}">', unsafe_allow_html=True)
-    st.info(f"⏱ {refresh_minutes}분마다 이 페이지가 자동으로 새로고침 됩니다.")
+    st.caption(f"안내: {refresh_minutes}분 주기로 페이지가 자동 갱신됩니다.")
 
-st.markdown("---")
+st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
 # 뉴스 결과 렌더링 영역
@@ -273,7 +356,7 @@ if do_search:
         naver_client_secret="3Yx_9guJfU"
     )
 
-    with st.spinner("웹에서 실시간으로 기사를 수집하고 필터링하고 있습니다..."):
+    with st.spinner("웹 서버에서 실시간 기사를 수집하고 있습니다..."):
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit): kw for kw in keywords}
@@ -284,11 +367,10 @@ if do_search:
                 except Exception as e:
                     st.error(f"{kw} 검색 중 오류 발생: {e}")
 
-    # PC 모니터 폭에 최적화하여 한 줄에 3개씩 배치되도록 설정
+    # 대시보드를 3열 그리드로 모던하게 렌더링
     num_kw = len(keywords)
     columns_per_row = 3
     
-    # 3개씩 묶어서 행(Row) 생성
     for i in range(0, num_kw, columns_per_row):
         cols = st.columns(columns_per_row)
         for j in range(columns_per_row):
@@ -297,12 +379,12 @@ if do_search:
                 news_list = results_dict.get(kw, [])
                 
                 with cols[j]:
-                    st.markdown(f"#### 📂 [{kw}] 실시간 현황")
-                    
-                    # 스크롤 가능한 컨테이너 (고정 높이)
-                    with st.container(height=500):
+                    # 모던한 느낌의 카드 레이아웃 컨테이너 (스크롤 포함)
+                    with st.container(height=480, border=True):
+                        st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
+                        
                         if not news_list:
-                            st.info("수집된 뉴스가 없습니다.")
+                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
                             for news in news_list:
                                 title = news['title']
@@ -312,19 +394,23 @@ if do_search:
                                 
                                 prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
-                                
-                                # HTML title 속성을 이용해 마우스 오버 시 툴팁(말풍선)으로 전체 글자 표시
                                 tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
                                 
-                                if is_urgent:
-                                    css_class = "news-link urgent-news"
-                                    display_text = f"🚨 [긴급] {prefix} {title}"
-                                else:
-                                    css_class = "news-link"
-                                    display_text = f"• {prefix} {title}"
-                                    
-                                st.markdown(f"<a href='{link}' class='{css_class}' target='_blank' title='{tooltip_text}'>{display_text}</a>", unsafe_allow_html=True)
+                                # 각 뉴스 항목을 감싸는 HTML 디자인 적용
+                                st.markdown("<div class='news-item'>", unsafe_allow_html=True)
                                 
-                    st.markdown("<br>", unsafe_allow_html=True)
+                                if is_urgent:
+                                    st.markdown(f"""
+                                        <span class='urgent-tag'>[긴급]</span>
+                                        <span class='news-meta'>{prefix}</span>
+                                        <a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"""
+                                        <span class='news-meta'>{prefix}</span>
+                                        <a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a>
+                                    """, unsafe_allow_html=True)
+                                    
+                                st.markdown("</div>", unsafe_allow_html=True)
 
-    st.success(f"✅ 검색 및 웹 출력 완료! (기준 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+    st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
