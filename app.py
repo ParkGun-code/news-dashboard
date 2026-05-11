@@ -199,29 +199,43 @@ class NewsScraper:
     def get_daum_news_pool(self, keyword, start_date, end_date, limit=200):
         query = keyword.replace('&', ' ')
         encoded_query = urllib.parse.quote(query)
-        # 다음은 URL 변수로 정확하게 묶어서 검색할 수 있습니다.
         sd = start_date.strftime("%Y%m%d") + "000000"
         ed = end_date.strftime("%Y%m%d") + "235959"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        # 1. 봇 차단을 우회하기 위한 강력한 브라우저 위장 헤더
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
         results = []
         max_pages = math.ceil(limit / 10)
         
         for page in range(1, max_pages + 1):
-            url = f"https://search.daum.net/search?w=news&q={encoded_query}&sort=recency&DA=STC&sd={sd}&ed={ed}&p={page}"
+            # 2. period=u (기간 사용자 지정 파라미터) 필수 추가
+            url = f"https://search.daum.net/search?w=news&q={encoded_query}&sort=recency&DA=STC&period=u&sd={sd}&ed={ed}&p={page}"
             try:
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers=headers, timeout=5)
                 soup = BeautifulSoup(response.text, 'html.parser')
-                articles = soup.select('.c-item-content')
+                
+                # 3. 다음 뉴스 웹페이지 구조 변화에 대응하기 위한 다중 태그 탐색
+                articles = soup.select('ul.c-list-basic > li') or soup.select('.c-item-content') or soup.select('div.cont_inner')
                 if not articles: break
                     
                 for article in articles:
-                    title_elem = article.select_one('.item-title .tit-g')
-                    desc_elem = article.select_one('.conts-desc')
-                    if title_elem:
-                        title = title_elem.text.strip()
-                        link = title_elem.get('href')
-                        description = desc_elem.text.strip() if desc_elem else ""
+                    title_elem = article.select_one('.item-title a') or article.select_one('a.tit_main') or article.select_one('.wrap_tit a')
+                    if not title_elem:
+                        continue
+                        
+                    desc_elem = article.select_one('.conts-desc') or article.select_one('p.desc') or article.select_one('.f_eb.desc')
+                    
+                    title = title_elem.text.strip()
+                    link = title_elem.get('href')
+                    description = desc_elem.text.strip() if desc_elem else ""
+                    
+                    if title:
                         results.append({"title": title, "link": link, "description": description})
+                        
                 if len(results) >= limit: break
             except Exception:
                 break
@@ -314,138 +328,8 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     col3, col4, col5 = st.columns([3, 1, 2])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "사건, 사고, 화재, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col5:
-        period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"])
-
-    col6, col7, col8 = st.columns([3, 1.5, 1.5])
-    with col6:
-        # 기간 선택 시 달력 입력창 등장, 아닐 경우 텍스트로 적용된 기간 표시
-        if period_combo == "기간 선택":
-            date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
-                                       value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today()),
-                                       max_value=datetime.date.today())
-            if isinstance(date_range, tuple) and len(date_range) == 2:
-                start_date, end_date = date_range
-            elif isinstance(date_range, tuple) and len(date_range) == 1:
-                start_date = end_date = date_range[0]
-            else:
-                start_date = end_date = datetime.date.today()
-        else:
-            end_date = datetime.date.today()
-            if period_combo == "오늘":
-                start_date = end_date
-            elif period_combo == "일주일":
-                start_date = end_date - datetime.timedelta(days=7)
-            elif period_combo == "한달":
-                start_date = end_date - datetime.timedelta(days=30)
-            elif period_combo == "일년":
-                start_date = end_date - datetime.timedelta(days=365)
-            
-            st.text_input("적용된 기간 (자동 계산됨)", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
-
-    with col7:
-        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
-    with col8:
-        if refresh_combo == "기타":
-            refresh_minutes = st.number_input("갱신(분)", min_value=1, value=15)
-        elif refresh_combo != "사용 안함":
-            refresh_minutes = int(refresh_combo.replace("분", ""))
-        else:
-            refresh_minutes = 0
-
-    st.write("")
-    do_search = st.button("뉴스 검색 실행", type="primary", use_container_width=True)
-
-# 자동 갱신 처리
-if refresh_minutes > 0 and do_search:
-    st.markdown(f'<meta http-equiv="refresh" content="{refresh_minutes * 60}">', unsafe_allow_html=True)
-    st.caption(f"안내: {refresh_minutes}분 주기로 페이지가 자동 갱신됩니다.")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ==========================================
-# 뉴스 결과 렌더링 영역
-# ==========================================
-if do_search:
-    if not selected_portals:
-        st.error("최소 하나 이상의 포털을 선택해주세요.")
-        st.stop()
-        
-    if not keywords_str.strip():
-        st.error("검색어를 입력해주세요.")
-        st.stop()
-
-    raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-    keywords = []
-    for k in raw_keywords:
-        if k not in keywords: keywords.append(k)
-
-    scraper = NewsScraper(
-        naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
-        naver_client_secret="3Yx_9guJfU"
-    )
-
-    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 실시간 기사를 수집하고 있습니다..."):
-        results_dict = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date): kw for kw in keywords}
-            for future in concurrent.futures.as_completed(future_to_kw):
-                kw = future_to_kw[future]
-                try:
-                    results_dict[kw] = future.result()
-                except Exception as e:
-                    st.error(f"{kw} 검색 중 오류 발생: {e}")
-
-    # 대시보드를 3열 그리드로 모던하게 렌더링
-    num_kw = len(keywords)
-    columns_per_row = 3
-    
-    for i in range(0, num_kw, columns_per_row):
-        cols = st.columns(columns_per_row)
-        for j in range(columns_per_row):
-            if i + j < num_kw:
-                kw = keywords[i + j]
-                news_list = results_dict.get(kw, [])
-                
-                with cols[j]:
-                    # 모던한 느낌의 카드 레이아웃 컨테이너 (스크롤 포함)
-                    with st.container(height=480, border=True):
-                        st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
-                        
-                        if not news_list:
-                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
-                        else:
-                            # 스트림릿의 st.markdown 연속 사용으로 인한 여백 발생을 막기 위해 전체 HTML을 하나로 합쳐서 출력
-                            html_content = ""
-                            for news in news_list:
-                                title = news['title']
-                                link = news['link']
-                                portal = news['portal']
-                                region = news['region']
-                                
-                                prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
-                                is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
-                                tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
-                                
-                                if is_urgent:
-                                    html_content += f"""
-                                    <div class='news-item'>
-                                        <span class='urgent-tag'>[긴급]</span>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    </div>
-                                    """
-                                else:
-                                    html_content += f"""
-                                    <div class='news-item'>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    </div>
-                                    """
-                            
-                            st.markdown(html_content, unsafe_allow_html=True)
-
-    st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        period_
