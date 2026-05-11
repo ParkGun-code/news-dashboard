@@ -68,7 +68,7 @@ st.markdown("""
 
     /* 뉴스 항목 개별 텍스트 및 링크 스타일 */
     .news-item {
-        padding: 8px 0;
+        padding: 4px 0; /* 간격을 기존 8px에서 4px로 절반 감소 */
         border-bottom: 1px dashed #f1f5f9;
     }
     .news-item:last-child {
@@ -418,6 +418,8 @@ if do_search:
                         if not news_list:
                             st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
+                            # 스트림릿의 st.markdown 연속 사용으로 인한 여백 발생을 막기 위해 전체 HTML을 하나로 합쳐서 출력
+                            html_content = ""
                             for news in news_list:
                                 title = news['title']
                                 link = news['link']
@@ -428,21 +430,22 @@ if do_search:
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
                                 tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
                                 
-                                # 각 뉴스 항목을 감싸는 HTML 디자인 적용
-                                st.markdown("<div class='news-item'>", unsafe_allow_html=True)
-                                
                                 if is_urgent:
-                                    st.markdown(f"""
+                                    html_content += f"""
+                                    <div class='news-item'>
                                         <span class='urgent-tag'>[긴급]</span>
                                         <span class='news-meta'>{prefix}</span>
                                         <a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    """, unsafe_allow_html=True)
+                                    </div>
+                                    """
                                 else:
-                                    st.markdown(f"""
+                                    html_content += f"""
+                                    <div class='news-item'>
                                         <span class='news-meta'>{prefix}</span>
                                         <a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    """, unsafe_allow_html=True)
-                                    
-                                st.markdown("</div>", unsafe_allow_html=True)
+                                    </div>
+                                    """
+                            
+                            st.markdown(html_content, unsafe_allow_html=True)
 
     st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
