@@ -402,7 +402,7 @@ if st.session_state.run_search:
     if refresh_minutes > 0:
         st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
         current_time_str = datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')
-        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 깜빡임 없이 데이터만 부드럽게 자동 갱신됩니다. (최근 갱신 시간: {current_time_str})")
+        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 자동 갱신 (최근 갱신 시간: {current_time_str})")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
