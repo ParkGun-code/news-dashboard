@@ -335,7 +335,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     col3, col4, col_sort, col5 = st.columns([3, 1, 1, 1.5])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col_sort:
@@ -391,11 +391,14 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 # st.session_state.run_search 가 True일 때만 결과를 화면에 뿌림
 if st.session_state.run_search:
     
+    # 한국 표준시(KST) 설정
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    
     # --- 백그라운드 무자각 자동 갱신 타이머 실행 ---
     if refresh_minutes > 0:
         st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
-        current_time_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 자동 갱신 (최근 갱신 시간: {current_time_str})")
+        current_time_str = datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')
+        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 깜빡임 없이 데이터만 부드럽게 자동 갱신됩니다. (최근 갱신 시간: {current_time_str})")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -476,4 +479,4 @@ if st.session_state.run_search:
                             
                             st.markdown(html_content, unsafe_allow_html=True)
 
-    st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')}")
