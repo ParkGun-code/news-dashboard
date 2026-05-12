@@ -343,20 +343,24 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     with col5:
         period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"])
 
+    # 한국 표준시(KST) 기준으로 '오늘' 날짜를 다시 계산하도록 추가
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    today_kst = datetime.datetime.now(kst).date()
+
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
         if period_combo == "기간 선택":
             date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
-                                       value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today()),
-                                       max_value=datetime.date.today())
+                                       value=(today_kst - datetime.timedelta(days=7), today_kst),
+                                       max_value=today_kst)
             if isinstance(date_range, tuple) and len(date_range) == 2:
                 start_date, end_date = date_range
             elif isinstance(date_range, tuple) and len(date_range) == 1:
                 start_date = end_date = date_range[0]
             else:
-                start_date = end_date = datetime.date.today()
+                start_date = end_date = today_kst
         else:
-            end_date = datetime.date.today()
+            end_date = today_kst
             if period_combo == "오늘":
                 start_date = end_date
             elif period_combo == "일주일":
@@ -398,7 +402,7 @@ if st.session_state.run_search:
     if refresh_minutes > 0:
         st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
         current_time_str = datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')
-        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 자동 갱신 (최근 갱신 시간: {current_time_str})")
+        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 깜빡임 없이 데이터만 부드럽게 자동 갱신됩니다. (최근 갱신 시간: {current_time_str})")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
