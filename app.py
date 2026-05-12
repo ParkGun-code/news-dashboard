@@ -375,7 +375,7 @@ if st.session_state.run_search:
     # --- 백그라운드 무자각 자동 갱신 타이머 실행 ---
     if refresh_minutes > 0:
         st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
-        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 깜빡임 없이 데이터만 부드럽게 자동 갱신됩니다.")
+        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 자동 갱신")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
