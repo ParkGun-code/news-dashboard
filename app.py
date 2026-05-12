@@ -7,6 +7,7 @@ from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 import feedparser
 import concurrent.futures
+from streamlit_autorefresh import st_autorefresh # 화면 깜빡임 없는 자동 갱신 라이브러리 추가
 
 # --- 웹페이지 기본 설정 (PC 와이드 화면에 최적화) ---
 st.set_page_config(page_title="뉴스 모니터링 시스템", layout="wide")
@@ -202,7 +203,6 @@ class NewsScraper:
         sd = start_date.strftime("%Y%m%d") + "000000"
         ed = end_date.strftime("%Y%m%d") + "235959"
         
-        # 봇 차단 방지용 크롬 User-Agent
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -215,7 +215,6 @@ class NewsScraper:
                 response = requests.get(url, headers=headers, timeout=5)
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # 다음(Daum) 변경된 웹 구조 대응
                 articles = soup.select('.c-item-content') or soup.select('ul.c-list-basic > li') or soup.select('.wrap_cont')
                 if not articles: break
                     
@@ -319,7 +318,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     col3, col4, col5 = st.columns([3, 1, 2])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "사건, 사고, 화재, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col5:
@@ -370,13 +369,13 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 # 자동 갱신 및 뉴스 렌더링 영역
 # ==========================================
 
-# st.session_state.run_search 가 True일 때만 결과를 화면에 뿌림 (새로고침 되어도 유지됨)
+# st.session_state.run_search 가 True일 때만 결과를 화면에 뿌림
 if st.session_state.run_search:
     
-    # 갱신 주기가 설정되어 있을 때 새로고침 메타 태그 동작
+    # --- 백그라운드 무자각 자동 갱신 타이머 실행 ---
     if refresh_minutes > 0:
-        st.markdown(f'<meta http-equiv="refresh" content="{refresh_minutes * 60}">', unsafe_allow_html=True)
-        st.caption(f"안내: {refresh_minutes}분 주기로 페이지가 자동 갱신됩니다. (현재 조건 유지 중)")
+        st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
+        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 깜빡임 없이 데이터만 부드럽게 자동 갱신됩니다.")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -398,7 +397,7 @@ if st.session_state.run_search:
         naver_client_secret="3Yx_9guJfU"
     )
 
-    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 최신 기사를 수집하고 있습니다..."):
+    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 실시간 기사를 수집하고 있습니다..."):
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date): kw for kw in keywords}
