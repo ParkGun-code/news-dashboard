@@ -11,6 +11,10 @@ import concurrent.futures
 # --- 웹페이지 기본 설정 (PC 와이드 화면에 최적화) ---
 st.set_page_config(page_title="뉴스 모니터링 시스템", layout="wide")
 
+# --- 💡 (중요) 검색 실행 상태를 기억하는 세션 스토리지 초기화 ---
+if 'run_search' not in st.session_state:
+    st.session_state.run_search = False
+
 # --- 🎨 엔터프라이즈급 모던/세련된 커스텀 CSS ---
 st.markdown("""
     <style>
@@ -68,7 +72,7 @@ st.markdown("""
 
     /* 뉴스 항목 개별 텍스트 및 링크 스타일 */
     .news-item {
-        padding: 4px 0; /* 간격을 기존 8px에서 4px로 절반 감소 */
+        padding: 4px 0; /* 간격 축소 유지 */
         border-bottom: 1px dashed #f1f5f9;
     }
     .news-item:last-child {
@@ -97,7 +101,7 @@ st.markdown("""
         text-decoration: underline;
     }
     
-    /* 긴급 뉴스 하이라이트 (너무 쨍하지 않은 레드) */
+    /* 긴급 뉴스 하이라이트 */
     .urgent-tag {
         color: #e11d48;
         font-weight: 700;
@@ -127,7 +131,6 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
 
     def get_google_news_pool(self, keyword, start_date, end_date, limit=200):
-        # 구글 RSS의 날짜 검색 기능 (after: / before: 문법 사용)
         before_date = end_date + datetime.timedelta(days=1)
         query = f"{keyword.replace('&', ' OR ')} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
         encoded_query = urllib.parse.quote(query)
@@ -162,7 +165,6 @@ class NewsScraper:
         }
         results = []
 
-        # 네이버 API는 최대 1000개까지 제공하므로, 최대한 깊이 탐색하여 과거 기사를 획득합니다.
         for start in range(1, 1001, 100):
             display = min(100, 1001 - start)
             params = {"query": query, "display": display, "start": start, "sort": "date"}
@@ -177,10 +179,8 @@ class NewsScraper:
                     try:
                         dt = parsedate_to_datetime(item['pubDate'])
                         dt_date = dt.astimezone(self.kst).date()
-                        # 지정된 종료일보다 최신 기사면 무시하고 다음 기사로 패스
                         if dt_date > end_date:
                             continue
-                        # 지정된 시작일보다 더 옛날 기사가 나오면 탐색을 완전히 종료
                         elif dt_date < start_date:
                             stop_fetching = True 
                             continue
@@ -199,11 +199,10 @@ class NewsScraper:
     def get_daum_news_pool(self, keyword, start_date, end_date, limit=200):
         query = keyword.replace('&', ' ')
         encoded_query = urllib.parse.quote(query)
-        # 다음은 URL 변수로 정확하게 묶어서 검색할 수 있습니다. (period=u 파라미터 추가)
         sd = start_date.strftime("%Y%m%d") + "000000"
         ed = end_date.strftime("%Y%m%d") + "235959"
         
-        # 봇(Bot) 차단 방지를 위해 최신 PC 크롬 브라우저 정보로 User-Agent 강화
+        # 봇 차단 방지용 크롬 User-Agent
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -216,12 +215,11 @@ class NewsScraper:
                 response = requests.get(url, headers=headers, timeout=5)
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # 변경된 다음(Daum) 뉴스 UI에 모두 대응할 수 있도록 다중 선택자(Selector) 적용
+                # 다음(Daum) 변경된 웹 구조 대응
                 articles = soup.select('.c-item-content') or soup.select('ul.c-list-basic > li') or soup.select('.wrap_cont')
                 if not articles: break
                     
                 for article in articles:
-                    # 제목과 내용 추출 규칙 강화
                     title_elem = article.select_one('.item-title a') or article.select_one('a.tit_main') or article.select_one('.tit-g a') or article.select_one('strong > a')
                     desc_elem = article.select_one('.conts-desc') or article.select_one('.desc') or article.select_one('p.f_eb')
                     
@@ -247,7 +245,6 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     
     for portal_name in selected_portals:
         fetch_func = portal_methods[portal_name]
-        # 기간에 맞춰 여유롭게 탐색 후 필터링 진행
         news_pool = fetch_func(keyword, start_date, end_date, limit=200)
         
         seen_links = set()
@@ -302,10 +299,10 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     return (urgent_news + mixed_normal)[:limit]
 
 # ==========================================
-# 메인 헤더 (모던 텍스트 기반)
+# 메인 헤더
 # ==========================================
 st.markdown("<div class='main-header'>실시간 사건·사고 모니터링</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>Contact me by email in case of any issues.(gun802000@gmail.com)</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>Contact me by email in case of any issues. (gun802000@gmail.com)</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널 (검색 조건 설정)
@@ -318,11 +315,11 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
         selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, default=["대전", "충남"])
 
-    st.write("") # 간격 띄우기
+    st.write("") 
 
     col3, col4, col5 = st.columns([3, 1, 2])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "사건, 사고, 화재, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col5:
@@ -330,7 +327,6 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
-        # 기간 선택 시 달력 입력창 등장, 아닐 경우 텍스트로 적용된 기간 표시
         if period_combo == "기간 선택":
             date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
                                        value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today()),
@@ -365,19 +361,25 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             refresh_minutes = 0
 
     st.write("")
-    do_search = st.button("뉴스 검색 실행", type="primary", use_container_width=True)
-
-# 자동 갱신 처리
-if refresh_minutes > 0 and do_search:
-    st.markdown(f'<meta http-equiv="refresh" content="{refresh_minutes * 60}">', unsafe_allow_html=True)
-    st.caption(f"안내: {refresh_minutes}분 주기로 페이지가 자동 갱신됩니다.")
-
-st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 클릭 시 session_state를 True로 변경하여 새로고침 시에도 기억하게 함
+    if st.button("뉴스 검색 실행", type="primary", use_container_width=True):
+        st.session_state.run_search = True
 
 # ==========================================
-# 뉴스 결과 렌더링 영역
+# 자동 갱신 및 뉴스 렌더링 영역
 # ==========================================
-if do_search:
+
+# st.session_state.run_search 가 True일 때만 결과를 화면에 뿌림 (새로고침 되어도 유지됨)
+if st.session_state.run_search:
+    
+    # 갱신 주기가 설정되어 있을 때 새로고침 메타 태그 동작
+    if refresh_minutes > 0:
+        st.markdown(f'<meta http-equiv="refresh" content="{refresh_minutes * 60}">', unsafe_allow_html=True)
+        st.caption(f"안내: {refresh_minutes}분 주기로 페이지가 자동 갱신됩니다. (현재 조건 유지 중)")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if not selected_portals:
         st.error("최소 하나 이상의 포털을 선택해주세요.")
         st.stop()
@@ -396,7 +398,7 @@ if do_search:
         naver_client_secret="3Yx_9guJfU"
     )
 
-    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 실시간 기사를 수집하고 있습니다..."):
+    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 최신 기사를 수집하고 있습니다..."):
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date): kw for kw in keywords}
@@ -407,7 +409,6 @@ if do_search:
                 except Exception as e:
                     st.error(f"{kw} 검색 중 오류 발생: {e}")
 
-    # 대시보드를 3열 그리드로 모던하게 렌더링
     num_kw = len(keywords)
     columns_per_row = 3
     
@@ -419,14 +420,12 @@ if do_search:
                 news_list = results_dict.get(kw, [])
                 
                 with cols[j]:
-                    # 모던한 느낌의 카드 레이아웃 컨테이너 (스크롤 포함)
                     with st.container(height=480, border=True):
                         st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
                         
                         if not news_list:
                             st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
-                            # 스트림릿의 st.markdown 연속 사용으로 인한 여백 발생을 막기 위해 전체 HTML을 하나로 합쳐서 출력
                             html_content = ""
                             for news in news_list:
                                 title = news['title']
