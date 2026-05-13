@@ -397,16 +397,13 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             refresh_minutes = 0
             
     st.markdown("---")
-    st.markdown("💬 **텔레그램 알림 설정 (기본값 적용 완료)**")
-    t_col1, t_col2, t_col3 = st.columns([2, 2, 1])
-    with t_col1:
-        tele_token = st.text_input("봇 토큰 (Bot Token)", value="8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM", type="password")
-    with t_col2:
-        tele_chat_id = st.text_input("채팅방 ID (Chat ID)", value="-5217025178")
-    with t_col3:
-        tele_send_limit = st.number_input("항목별 전송 기사 수", min_value=1, max_value=30, value=5, help="텔레그램 채팅방 도배를 방지하기 위해 5~10개를 권장합니다.")
+    
+    # 텔레그램 보안 정보 하드코딩 (UI에 노출하지 않음)
+    tele_token = "8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM"
+    tele_chat_id = "-5217025178"
+    tele_send_limit = 5
 
-    # 자동 발송 체크박스 추가
+    # 자동 발송 기능 on/off용 체크박스만 유지
     auto_tele_check = st.checkbox("⏰ 아침 8시 ~ 저녁 6시 매 정각(1시간)마다 텔레그램 자동 발송 켜기 ※ 주의: 이 웹페이지(창)가 켜져 있어야 작동합니다.", value=True)
 
     st.write("")
@@ -570,7 +567,7 @@ if st.session_state.run_search:
     # --- 텔레그램 수동 발송 버튼 ---
     if st.button("📲 현재 화면의 뉴스를 텔레그램으로 수동 전송", use_container_width=True):
         if not tele_token or not tele_chat_id:
-            st.warning("⚠️ 화면 위쪽 '검색 조건 설정' 패널에서 [텔레그램 봇 토큰]과 [채팅방 ID]를 먼저 입력해주세요!")
+            st.warning("⚠️ 텔레그램 설정이 코드에 입력되지 않았습니다.")
         else:
             with st.spinner("텔레그램으로 전송 중입니다..."):
                 msg_body = f"📰 <b>실시간 뉴스 모니터링 수동 전송</b> ({current_time_str})\n\n"
