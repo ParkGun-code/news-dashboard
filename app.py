@@ -7,14 +7,20 @@ from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 import feedparser
 import concurrent.futures
-from streamlit_autorefresh import st_autorefresh # 화면 깜빡임 없는 자동 갱신 라이브러리 추가
+from streamlit_autorefresh import st_autorefresh 
 
 # --- 웹페이지 기본 설정 (PC 와이드 화면에 최적화) ---
 st.set_page_config(page_title="뉴스 모니터링 시스템", layout="wide")
 
-# --- 💡 (중요) 검색 실행 상태를 기억하는 세션 스토리지 초기화 ---
+# --- 💡 (중요) 검색 상태와 결과값을 기억하는 세션 스토리지 초기화 ---
 if 'run_search' not in st.session_state:
     st.session_state.run_search = False
+if 'last_fetch_time' not in st.session_state:
+    st.session_state.last_fetch_time = None
+if 'cached_results' not in st.session_state:
+    st.session_state.cached_results = {}
+if 'cached_keywords' not in st.session_state:
+    st.session_state.cached_keywords = []
 
 # --- 🎨 엔터프라이즈급 모던/세련된 커스텀 CSS ---
 st.markdown("""
@@ -155,7 +161,6 @@ class NewsScraper:
             results.append({"title": title, "link": entry.link, "description": description, "published": dt})
             if len(results) >= limit: break
             
-        # 구글 뉴스의 경우 최신순(date)을 요청하면 수집된 날짜를 기준으로 재정렬
         if sort_method == 'date':
             results.sort(key=lambda x: x['published'], reverse=True)
             
@@ -174,7 +179,6 @@ class NewsScraper:
 
         for start in range(1, 1001, 100):
             display = min(100, 1001 - start)
-            # 중요도순이면 'sim'(관련도), 최신순이면 'date'(날짜순) 파라미터 전송
             sort_param = "sim" if sort_method == 'sim' else "date"
             params = {"query": query, "display": display, "start": start, "sort": sort_param}
             try:
@@ -189,14 +193,12 @@ class NewsScraper:
                         dt = parsedate_to_datetime(item['pubDate'])
                         dt_date = dt.astimezone(self.kst).date()
                         
-                        # 최신순일 경우, 날짜가 범위를 벗어나면 즉시 중단 최적화 가능
                         if sort_method == 'date':
                             if dt_date > end_date:
                                 continue
                             elif dt_date < start_date:
                                 stop_fetching = True 
                                 continue
-                        # 중요도순일 경우, 순서가 섞여있으므로 버리기만 하고 중단하지 않음
                         else:
                             if not (start_date <= dt_date <= end_date):
                                 continue
@@ -225,7 +227,6 @@ class NewsScraper:
         max_pages = math.ceil(limit / 10)
         
         for page in range(1, max_pages + 1):
-            # 중요도순이면 'accuracy'(정확도), 최신순이면 'recency'(최신순)
             sort_param = "accuracy" if sort_method == 'sim' else "recency"
             url = f"https://search.daum.net/search?w=news&q={encoded_query}&sort={sort_param}&DA=STC&period=u&sd={sd}&ed={ed}&p={page}"
             try:
@@ -335,7 +336,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     col3, col4, col_sort, col5 = st.columns([3, 1, 1, 1.5])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
+        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
     with col_sort:
@@ -343,7 +344,6 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     with col5:
         period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"])
 
-    # 한국 표준시(KST) 기준으로 '오늘' 날짜를 다시 계산하도록 추가
     kst = datetime.timezone(datetime.timedelta(hours=9))
     today_kst = datetime.datetime.now(kst).date()
 
@@ -384,68 +384,95 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     st.write("")
     
-    # 클릭 시 session_state를 True로 변경하여 새로고침 시에도 기억하게 함
+    # 💡 뉴스 검색 실행 시 즉시 크롤링을 수행하도록 last_fetch_time을 초기화합니다.
     if st.button("뉴스 검색 실행", type="primary", use_container_width=True):
         st.session_state.run_search = True
+        st.session_state.last_fetch_time = None
 
 # ==========================================
 # 자동 갱신 및 뉴스 렌더링 영역
 # ==========================================
 
-# st.session_state.run_search 가 True일 때만 결과를 화면에 뿌림
 if st.session_state.run_search:
-    
-    # 한국 표준시(KST) 설정
     kst = datetime.timezone(datetime.timedelta(hours=9))
+    now_time = datetime.datetime.now(kst)
     
-    # --- 백그라운드 무자각 자동 갱신 타이머 실행 ---
+    # --- 스마트 폴링 (Smart Polling) 로직 ---
+    # 브라우저는 지연 현상을 막기 위해 30초(30000ms)마다 파이썬을 가볍게 찔러 동기화만 시킵니다.
     if refresh_minutes > 0:
-        st_autorefresh(interval=refresh_minutes * 60 * 1000, key="news_autorefresh")
-        current_time_str = datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')
-        st.caption(f"⏱ 안내: {refresh_minutes}분 주기로 화면 자동 갱신 (최근 갱신 시간: {current_time_str})")
-    
+        st_autorefresh(interval=30 * 1000, key="news_autorefresh")
+        
+    # 파이썬 내부에서 '현재 시간 - 마지막 갱신 시간'의 절대적 차이를 계산하여 정확한 주기에만 크롤링을 수행합니다.
+    do_crawl = False
+    if st.session_state.last_fetch_time is None:
+        do_crawl = True
+    elif refresh_minutes > 0:
+        diff_seconds = (now_time - st.session_state.last_fetch_time).total_seconds()
+        # 설정한 주기에서 5초 정도의 여유를 두어 밀림 없이 갱신되도록 보장합니다.
+        if diff_seconds >= (refresh_minutes * 60 - 5):
+            do_crawl = True
+
+    # 갱신 주기가 도래했을 때만 무거운 크롤링 로직을 실행합니다.
+    if do_crawl:
+        if not selected_portals:
+            st.error("최소 하나 이상의 포털을 선택해주세요.")
+            st.stop()
+            
+        if not keywords_str.strip():
+            st.error("검색어를 입력해주세요.")
+            st.stop()
+
+        raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+        keywords = []
+        for k in raw_keywords:
+            if k not in keywords: keywords.append(k)
+
+        scraper = NewsScraper(
+            naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
+            naver_client_secret="3Yx_9guJfU"
+        )
+        
+        sort_method_val = 'sim' if sort_combo == "중요도순" else 'date'
+
+        with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 기사를 수집하고 있습니다..."):
+            results_dict = {}
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
+                for future in concurrent.futures.as_completed(future_to_kw):
+                    kw = future_to_kw[future]
+                    try:
+                        results_dict[kw] = future.result()
+                    except Exception as e:
+                        st.error(f"{kw} 검색 중 오류 발생: {e}")
+        
+        # 💡 성공적으로 수집이 완료되면 세션 저장소에 결과를 갱신합니다.
+        st.session_state.cached_results = results_dict
+        st.session_state.last_fetch_time = now_time
+        st.session_state.cached_keywords = keywords
+        
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if not selected_portals:
-        st.error("최소 하나 이상의 포털을 선택해주세요.")
-        st.stop()
-        
-    if not keywords_str.strip():
-        st.error("검색어를 입력해주세요.")
-        st.stop()
-
-    raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-    keywords = []
-    for k in raw_keywords:
-        if k not in keywords: keywords.append(k)
-
-    scraper = NewsScraper(
-        naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
-        naver_client_secret="3Yx_9guJfU"
-    )
+    # 항상 세션 저장소에 캐싱된 데이터(최신 결과)를 기반으로 화면에 그립니다.
+    cached_keywords = st.session_state.get('cached_keywords', [])
+    cached_results = st.session_state.get('cached_results', {})
+    last_fetch_time = st.session_state.get('last_fetch_time')
     
-    sort_method_val = 'sim' if sort_combo == "중요도순" else 'date'
+    current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
+    
+    if refresh_minutes > 0:
+        st.caption(f"⏱ 안내: 설정된 {refresh_minutes}분 주기로 데이터를 자동 수집합니다. (최근 수집 완료 시간: {current_time_str})")
+    else:
+        st.caption(f"✅ 최근 수집 완료 시간: {current_time_str}")
 
-    with st.spinner(f"[{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}] 구간의 기사를 수집하고 있습니다..."):
-        results_dict = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
-            for future in concurrent.futures.as_completed(future_to_kw):
-                kw = future_to_kw[future]
-                try:
-                    results_dict[kw] = future.result()
-                except Exception as e:
-                    st.error(f"{kw} 검색 중 오류 발생: {e}")
-
-    num_kw = len(keywords)
+    num_kw = len(cached_keywords)
     columns_per_row = 3
     
     for i in range(0, num_kw, columns_per_row):
         cols = st.columns(columns_per_row)
         for j in range(columns_per_row):
             if i + j < num_kw:
-                kw = keywords[i + j]
-                news_list = results_dict.get(kw, [])
+                kw = cached_keywords[i + j]
+                news_list = cached_results.get(kw, [])
                 
                 with cols[j]:
                     with st.container(height=480, border=True):
@@ -482,5 +509,3 @@ if st.session_state.run_search:
                                     """
                             
                             st.markdown(html_content, unsafe_allow_html=True)
-
-    st.caption(f"데이터 수집 완료 기준 시간: {datetime.datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S')}")
