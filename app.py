@@ -21,6 +21,8 @@ if 'cached_results' not in st.session_state:
     st.session_state.cached_results = {}
 if 'cached_keywords' not in st.session_state:
     st.session_state.cached_keywords = []
+if 'last_tele_hour' not in st.session_state:
+    st.session_state.last_tele_hour = None
 
 # --- 🎨 엔터프라이즈급 모던/세련된 커스텀 CSS ---
 st.markdown("""
@@ -55,7 +57,7 @@ st.markdown("""
 
     /* 검색 버튼(Primary)을 세련된 블루톤으로 강제 변경 */
     button[kind="primary"] {
-        background-color: #2563eb !important; /* 차분한 블루 */
+        background-color: #2563eb !important; 
         color: white !important;
         border: none !important;
         border-radius: 6px !important;
@@ -64,7 +66,7 @@ st.markdown("""
         transition: all 0.2s ease !important;
     }
     button[kind="primary"]:hover {
-        background-color: #1d4ed8 !important; /* 호버 시 조금 더 짙은 블루 */
+        background-color: #1d4ed8 !important; 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
     }
 
@@ -79,7 +81,7 @@ st.markdown("""
 
     /* 뉴스 항목 개별 텍스트 및 링크 스타일 */
     .news-item {
-        padding: 4px 0; /* 간격 축소 유지 */
+        padding: 4px 0; 
         border-bottom: 1px dashed #f1f5f9;
     }
     .news-item:last-child {
@@ -315,6 +317,18 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     
     return (urgent_news + mixed_normal)[:limit]
 
+def send_telegram_message(token, chat_id, text):
+    """텔레그램 API를 사용하여 메시지를 전송합니다."""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True # 링크 미리보기 비활성화 (채팅방 도배 방지)
+    }
+    response = requests.post(url, json=payload)
+    return response
+
 # ==========================================
 # 메인 헤더
 # ==========================================
@@ -381,10 +395,22 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             refresh_minutes = int(refresh_combo.replace("분", ""))
         else:
             refresh_minutes = 0
+            
+    st.markdown("---")
+    st.markdown("💬 **텔레그램 알림 설정 (기본값 적용 완료)**")
+    t_col1, t_col2, t_col3 = st.columns([2, 2, 1])
+    with t_col1:
+        tele_token = st.text_input("봇 토큰 (Bot Token)", value="8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM", type="password")
+    with t_col2:
+        tele_chat_id = st.text_input("채팅방 ID (Chat ID)", value="-5217025178")
+    with t_col3:
+        tele_send_limit = st.number_input("항목별 전송 기사 수", min_value=1, max_value=30, value=5, help="텔레그램 채팅방 도배를 방지하기 위해 5~10개를 권장합니다.")
+
+    # 자동 발송 체크박스 추가
+    auto_tele_check = st.checkbox("⏰ 아침 8시 ~ 저녁 6시 매 정각(1시간)마다 텔레그램 자동 발송 켜기 ※ 주의: 이 웹페이지(창)가 켜져 있어야 작동합니다.", value=True)
 
     st.write("")
     
-    # 💡 뉴스 검색 실행 시 즉시 크롤링을 수행하도록 last_fetch_time을 초기화합니다.
     if st.button("뉴스 검색 실행", type="primary", use_container_width=True):
         st.session_state.run_search = True
         st.session_state.last_fetch_time = None
@@ -397,22 +423,31 @@ if st.session_state.run_search:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
     
-    # --- 스마트 폴링 (Smart Polling) 로직 ---
-    # 브라우저는 지연 현상을 막기 위해 30초(30000ms)마다 파이썬을 가볍게 찔러 동기화만 시킵니다.
-    if refresh_minutes > 0:
+    # 텔레그램 자동 발송이 켜져 있거나, 일반 새로고침이 켜져 있다면 브라우저가 30초마다 서버를 확인하게 함
+    if refresh_minutes > 0 or auto_tele_check:
         st_autorefresh(interval=30 * 1000, key="news_autorefresh")
         
-    # 파이썬 내부에서 '현재 시간 - 마지막 갱신 시간'의 절대적 차이를 계산하여 정확한 주기에만 크롤링을 수행합니다.
     do_crawl = False
+    auto_tele_trigger = False
+    
+    curr_hour = now_time.hour
+    
+    # [1] 텔레그램 자동 발송 조건 체크 (08:00 ~ 18:00 사이, 시간이 바뀌었을 때 1회 작동)
+    if auto_tele_check and tele_token and tele_chat_id:
+        if 8 <= curr_hour <= 18:
+            if st.session_state.last_tele_hour != curr_hour:
+                auto_tele_trigger = True
+                do_crawl = True # 텔레그램 발송을 위해 가장 최신 뉴스로 업데이트
+    
+    # [2] 일반 웹 화면 자동 갱신 조건 체크
     if st.session_state.last_fetch_time is None:
         do_crawl = True
-    elif refresh_minutes > 0:
+    elif not auto_tele_trigger and refresh_minutes > 0:
         diff_seconds = (now_time - st.session_state.last_fetch_time).total_seconds()
-        # 설정한 주기에서 5초 정도의 여유를 두어 밀림 없이 갱신되도록 보장합니다.
         if diff_seconds >= (refresh_minutes * 60 - 5):
             do_crawl = True
 
-    # 갱신 주기가 도래했을 때만 무거운 크롤링 로직을 실행합니다.
+    # 조건에 해당할 때 뉴스 크롤링 수행
     if do_crawl:
         if not selected_portals:
             st.error("최소 하나 이상의 포털을 선택해주세요.")
@@ -445,14 +480,34 @@ if st.session_state.run_search:
                     except Exception as e:
                         st.error(f"{kw} 검색 중 오류 발생: {e}")
         
-        # 💡 성공적으로 수집이 완료되면 세션 저장소에 결과를 갱신합니다.
         st.session_state.cached_results = results_dict
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
         
+        # 텔레그램 정각 알림 트리거가 켜졌다면 메시지 전송
+        if auto_tele_trigger:
+            msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
+            for kw in keywords:
+                news_list = results_dict.get(kw, [])
+                if not news_list: continue
+                
+                msg_body += f"📂 <b>[{kw}]</b>\n"
+                for news in news_list[:tele_send_limit]:
+                    prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
+                    urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
+                    safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
+                    msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
+                msg_body += "\n"
+            
+            try:
+                send_telegram_message(tele_token, tele_chat_id, msg_body)
+                st.session_state.last_tele_hour = curr_hour # 발송 완료 후 보낸 시간을 기록하여 1시간 동안 중복 발송 방지
+            except Exception as e:
+                st.error(f"❌ 텔레그램 자동 전송 중 오류 발생: {e}")
+                st.session_state.last_tele_hour = curr_hour
+        
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 항상 세션 저장소에 캐싱된 데이터(최신 결과)를 기반으로 화면에 그립니다.
     cached_keywords = st.session_state.get('cached_keywords', [])
     cached_results = st.session_state.get('cached_results', {})
     last_fetch_time = st.session_state.get('last_fetch_time')
@@ -509,3 +564,34 @@ if st.session_state.run_search:
                                     """
                             
                             st.markdown(html_content, unsafe_allow_html=True)
+
+    st.markdown("---")
+    
+    # --- 텔레그램 수동 발송 버튼 ---
+    if st.button("📲 현재 화면의 뉴스를 텔레그램으로 수동 전송", use_container_width=True):
+        if not tele_token or not tele_chat_id:
+            st.warning("⚠️ 화면 위쪽 '검색 조건 설정' 패널에서 [텔레그램 봇 토큰]과 [채팅방 ID]를 먼저 입력해주세요!")
+        else:
+            with st.spinner("텔레그램으로 전송 중입니다..."):
+                msg_body = f"📰 <b>실시간 뉴스 모니터링 수동 전송</b> ({current_time_str})\n\n"
+                
+                for kw in cached_keywords:
+                    news_list = cached_results.get(kw, [])
+                    if not news_list: continue
+                    
+                    msg_body += f"📂 <b>[{kw}]</b>\n"
+                    for news in news_list[:tele_send_limit]:
+                        prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
+                        urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
+                        safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
+                        msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
+                    msg_body += "\n"
+                
+                try:
+                    res = send_telegram_message(tele_token, tele_chat_id, msg_body)
+                    if res.status_code == 200:
+                        st.success("✅ 텔레그램 채팅방으로 뉴스가 성공적으로 전송되었습니다!")
+                    else:
+                        st.error(f"❌ 전송 실패 (오류 코드: {res.status_code}) - 토큰과 채팅방 ID가 정확한지 확인해주세요.")
+                except Exception as e:
+                    st.error(f"❌ 텔레그램 전송 중 오류가 발생했습니다: {e}")
