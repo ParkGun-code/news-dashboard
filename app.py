@@ -489,9 +489,13 @@ if st.session_state.run_search:
             msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
                 news_list = results_dict.get(kw, [])
-                if not news_list: continue
-                
                 msg_body += f"📂 <b>[{kw}]</b>\n"
+                
+                # 뉴스가 없을 때 처리
+                if not news_list:
+                    msg_body += "관련 기사 없음\n\n"
+                    continue
+                
                 # 출력 기사 수(display_limit)만큼 전송
                 for news in news_list[:display_limit]:
                     prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
@@ -578,9 +582,13 @@ if st.session_state.run_search:
                 
                 for kw in cached_keywords:
                     news_list = cached_results.get(kw, [])
-                    if not news_list: continue
-                    
                     msg_body += f"📂 <b>[{kw}]</b>\n"
+                    
+                    # 뉴스가 없을 때 처리
+                    if not news_list:
+                        msg_body += "관련 기사 없음\n\n"
+                        continue
+                    
                     # 출력 기사 수(display_limit)만큼 전송
                     for news in news_list[:display_limit]:
                         prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
