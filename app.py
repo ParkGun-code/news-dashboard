@@ -352,7 +352,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     with col3:
         keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     with col4:
-        display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=15)
+        display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, value=10)
     with col_sort:
         sort_combo = st.selectbox("정렬 기준", ["중요도순", "최신순"])
     with col5:
@@ -387,12 +387,16 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             st.text_input("적용된 기간 (자동 계산됨)", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
 
     with col7:
-        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "1분", "3분", "5분", "10분", "30분", "기타"])
+        # 시간 단위를 포함하여 옵션 확대
+        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "10분", "30분", "1시간", "2시간", "3시간", "기타"])
     with col8:
         if refresh_combo == "기타":
-            refresh_minutes = st.number_input("갱신(분)", min_value=1, value=15)
+            refresh_minutes = st.number_input("갱신(분)", min_value=1, value=60)
         elif refresh_combo != "사용 안함":
-            refresh_minutes = int(refresh_combo.replace("분", ""))
+            if "시간" in refresh_combo:
+                refresh_minutes = int(refresh_combo.replace("시간", "")) * 60
+            else:
+                refresh_minutes = int(refresh_combo.replace("분", ""))
         else:
             refresh_minutes = 0
             
@@ -401,7 +405,6 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     # 텔레그램 보안 정보 하드코딩 (UI에 노출하지 않음)
     tele_token = "8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM"
     tele_chat_id = "-5217025178"
-    tele_send_limit = 5
 
     # 자동 발송 기능 on/off용 체크박스만 유지
     auto_tele_check = st.checkbox("⏰ 아침 8시 ~ 저녁 6시 매 정각(1시간)마다 텔레그램 자동 발송 켜기 ※ 주의: 이 웹페이지(창)가 켜져 있어야 작동합니다.", value=True)
@@ -489,7 +492,8 @@ if st.session_state.run_search:
                 if not news_list: continue
                 
                 msg_body += f"📂 <b>[{kw}]</b>\n"
-                for news in news_list[:tele_send_limit]:
+                # 출력 기사 수(display_limit)만큼 전송
+                for news in news_list[:display_limit]:
                     prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
                     urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
                     safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
@@ -512,7 +516,7 @@ if st.session_state.run_search:
     current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
     
     if refresh_minutes > 0:
-        st.caption(f"⏱ 안내: 설정된 {refresh_minutes}분 주기로 데이터를 자동 수집합니다. (최근 수집 완료 시간: {current_time_str})")
+        st.caption(f"⏱ 안내: 설정된 갱신 주기로 데이터를 자동 수집합니다. (최근 수집 완료 시간: {current_time_str})")
     else:
         st.caption(f"✅ 최근 수집 완료 시간: {current_time_str}")
 
@@ -577,7 +581,8 @@ if st.session_state.run_search:
                     if not news_list: continue
                     
                     msg_body += f"📂 <b>[{kw}]</b>\n"
-                    for news in news_list[:tele_send_limit]:
+                    # 출력 기사 수(display_limit)만큼 전송
+                    for news in news_list[:display_limit]:
                         prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
                         urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
                         safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
