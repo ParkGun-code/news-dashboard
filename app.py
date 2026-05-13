@@ -404,7 +404,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     
     # 텔레그램 보안 정보 하드코딩 (UI에 노출하지 않음)
     tele_token = "8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM"
-    tele_chat_id = "-5217025178"
+    tele_chat_id = "-1003880927818"
 
     # 자동 발송 기능 on/off용 체크박스만 유지
     auto_tele_check = st.checkbox("⏰ 아침 8시 ~ 저녁 6시 매 정각(1시간)마다 텔레그램 자동 발송 켜기 ※ 주의: 이 웹페이지(창)가 켜져 있어야 작동합니다.", value=True)
