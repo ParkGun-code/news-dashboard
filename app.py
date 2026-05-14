@@ -327,7 +327,7 @@ def send_telegram_message(token, chat_id, text):
 # 메인 헤더
 # ==========================================
 st.markdown("<div class='main-header'>실시간 사건·사고 모니터링</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>※ 현재 깃허브(GitHub) 24시간 백그라운드 봇을 통해 정각 알림이 전송되고 있습니다.</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>※ 자동 텔레그램 발송 기능을 이용하려면 이 웹 브라우저 창을 닫지 말고 계속 켜두세요.</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널 (검색 조건 설정)
@@ -381,7 +381,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             st.text_input("적용된 기간 (자동 계산됨)", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
 
     with col7:
-        refresh_combo = st.selectbox("자동 갱신 주기", ["사용 안함", "10분", "30분", "1시간", "2시간", "3시간", "기타"])
+        refresh_combo = st.selectbox("웹 화면 자동 갱신 주기", ["사용 안함", "10분", "30분", "1시간", "2시간", "3시간", "기타"])
     with col8:
         if refresh_combo == "기타":
             refresh_minutes = st.number_input("갱신(분)", min_value=1, value=60)
@@ -395,7 +395,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             
     st.markdown("---")
     
-    # 💡 [보안 조치] Streamlit Secrets에서 토큰 가져오기 (없으면 에러 방지)
+    # 💡 [보안 조치] Streamlit Secrets에서 텔레그램 토큰 불러오기
     try:
         tele_token = st.secrets["TELEGRAM_TOKEN"]
     except Exception:
@@ -403,8 +403,11 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
         
     tele_chat_id = "-1003880927818" # 채팅방 ID
 
-    # 💡 백그라운드 봇을 사용할 것이므로 브라우저 의존 기능은 기본 꺼짐(False)으로 둡니다. 중복 발송 방지.
-    auto_tele_check = st.checkbox("⏰ 웹페이지 켜짐 연동 발송 (백그라운드 봇 사용 시 체크 해제 유지 권장)", value=False)
+    # 브라우저가 열려있을 때 작동하는 텔레그램 자동 발송 설정
+    st.markdown("#### 📱 텔레그램 자동 연동 설정")
+    auto_tele_check = st.checkbox("⏰ 웹페이지 켜짐 연동 발송: 아침 8시 ~ 저녁 6시 사이 매 정각(1시간 단위)마다 텔레그램 발송 켜기", value=True)
+    if auto_tele_check:
+        st.info("💡 이 브라우저 창을 켜두시면 텔레그램으로 정각마다 뉴스가 자동 전송됩니다. 창을 닫으면 전송이 중단됩니다.")
 
     st.write("")
     
@@ -420,7 +423,7 @@ if st.session_state.run_search:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
     
-    # 이 페이지가 켜져있는 동안 브라우저가 30초마다 서버에 생존 신고를 하며 자동 작동을 유도합니다.
+    # 이 페이지가 켜져있는 동안 브라우저가 30초마다 서버에 생존 신고를 하며 정각 여부를 유도/확인합니다.
     if refresh_minutes > 0 or auto_tele_check:
         st_autorefresh(interval=30 * 1000, key="news_autorefresh")
         
@@ -431,11 +434,12 @@ if st.session_state.run_search:
     # [웹페이지 기반 텔레그램 정각 알림 로직]
     if auto_tele_check and tele_token and tele_chat_id:
         if 8 <= curr_hour <= 18:
+            # 현재 시간(시)이 마지막으로 보낸 시간(시)과 다르면 정각이 되었거나 처음 켰다는 뜻이므로 발송합니다.
             if st.session_state.last_tele_hour != curr_hour:
                 auto_tele_trigger = True
                 do_crawl = True 
     
-    # 일반 웹 화면 갱신 체크
+    # 일반 웹 화면 갱신 체크 로직
     if st.session_state.last_fetch_time is None:
         do_crawl = True
     elif not auto_tele_trigger and refresh_minutes > 0:
@@ -480,7 +484,7 @@ if st.session_state.run_search:
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
         
-        # 텔레그램 정각 알림 트리거 발동 시
+        # 텔레그램 정각 알림 트리거 발동 시 메시지 조립 및 전송
         if auto_tele_trigger:
             msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
@@ -501,7 +505,7 @@ if st.session_state.run_search:
             try:
                 send_telegram_message(tele_token, tele_chat_id, msg_body)
                 st.session_state.last_tele_hour = curr_hour 
-                st.toast("⏰ 정각 텔레그램 메시지가 발송되었습니다!", icon="✅")
+                st.toast("⏰ 정각 자동 텔레그램 메시지가 성공적으로 발송되었습니다!", icon="✅")
             except Exception as e:
                 st.error(f"❌ 텔레그램 자동 전송 중 오류 발생: {e}")
                 st.session_state.last_tele_hour = curr_hour
@@ -515,7 +519,7 @@ if st.session_state.run_search:
     current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
     
     if refresh_minutes > 0:
-        st.caption(f"⏱ 안내: 설정된 갱신 주기로 데이터를 자동 수집합니다. (최근 수집 완료 시간: {current_time_str})")
+        st.caption(f"⏱ 안내: 설정된 갱신 주기로 웹 화면 데이터를 자동 수집합니다. (최근 수집 시간: {current_time_str})")
     else:
         st.caption(f"✅ 최근 수집 완료 시간: {current_time_str}")
 
