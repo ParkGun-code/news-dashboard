@@ -3,7 +3,7 @@ name: 24/7 News Auto Bot
 on:
   schedule:
     # 정각 트래픽을 피해 매시간 45분에 실행되도록 변경
-    - cron: '45 * * * *'
+    - cron: '5 * * * *'
   workflow_dispatch:
 
 jobs:
