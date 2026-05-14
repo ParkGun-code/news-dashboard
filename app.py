@@ -327,7 +327,7 @@ def send_telegram_message(token, chat_id, text):
 # 메인 헤더
 # ==========================================
 st.markdown("<div class='main-header'>실시간 사건·사고 모니터링</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>※ 주의: 자동 텔레그램 발송을 원하시면 이 웹 브라우저 창을 계속 켜두셔야 합니다.</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>※ 현재 깃허브(GitHub) 24시간 백그라운드 봇을 통해 정각 알림이 전송되고 있습니다.</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널 (검색 조건 설정)
@@ -403,8 +403,8 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
         
     tele_chat_id = "-1003880927818" # 채팅방 ID
 
-    # 브라우저가 열려있을 때 30초마다 시간을 체크하며 발송하도록 만드는 설정
-    auto_tele_check = st.checkbox("⏰ 웹페이지 켜짐 연동 발송: 아침 8시 ~ 저녁 6시 사이 매 정각(1시간)마다 텔레그램 발송 켜기", value=True)
+    # 💡 백그라운드 봇을 사용할 것이므로 브라우저 의존 기능은 기본 꺼짐(False)으로 둡니다. 중복 발송 방지.
+    auto_tele_check = st.checkbox("⏰ 웹페이지 켜짐 연동 발송 (백그라운드 봇 사용 시 체크 해제 유지 권장)", value=False)
 
     st.write("")
     
