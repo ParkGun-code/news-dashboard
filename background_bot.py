@@ -2,21 +2,23 @@ import requests
 import urllib.parse
 import datetime
 import math
+import os
 from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 import feedparser
 
 # ==========================================
-# ⚙️ 텔레그램 및 검색 설정 (이 부분을 수정하세요)
+# ⚙️ 텔레그램 설정 (환경변수에서 안전하게 가져오기)
 # ==========================================
-TELEGRAM_TOKEN = "8921848994:AAHSDoeMSiAMPQYEMyIaYkNI110gzADesYM"
-CHAT_ID = "-1003880927818"
+# 💡 깃허브(GitHub)의 Secrets에서 안전하게 토큰을 가져옵니다.
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "") 
+CHAT_ID = "-1003880927818" 
 
 # 검색할 키워드 목록
 KEYWORDS = ["국토교통부", "대전지방국토관리청", "사건", "사고", "화재", "지진"]
 
 # 전송할 기사 개수
-DISPLAY_LIMIT = 15
+DISPLAY_LIMIT = 10
 
 # ==========================================
 
@@ -37,7 +39,6 @@ class NewsScraper:
         return results
 
     def get_naver_news_pool(self, keyword, limit=100):
-        # 네이버 API 키 (기존 키 사용)
         client_id = "5p3Vuu15J3_qo3MMGOLl"
         client_secret = "3Yx_9guJfU"
         query = keyword.replace('&', ' ')
@@ -76,6 +77,9 @@ class NewsScraper:
         return results
 
 def send_telegram_message(token, chat_id, text):
+    if not token:
+        print("경고: 텔레그램 토큰이 설정되지 않았습니다.")
+        return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
     requests.post(url, json=payload)
@@ -84,7 +88,7 @@ def main():
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
     
-    # 아침 8시 ~ 저녁 6시 사이에만 작동하도록 설정 (현재 수동 테스트를 위해 임시 주석 처리함)
+    # 아침 8시 ~ 저녁 6시 사이에만 작동하도록 설정
     if not (8 <= now_time.hour <= 18):
         print("현재는 알림 발송 시간이 아닙니다.")
         return
@@ -93,7 +97,6 @@ def main():
     msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
     
     for kw in KEYWORDS:
-        # 네이버, 구글, 다음 뉴스 수집 및 합치기
         naver_news = scraper.get_naver_news_pool(kw, limit=DISPLAY_LIMIT)
         google_news = scraper.get_google_news_pool(kw, limit=DISPLAY_LIMIT)
         daum_news = scraper.get_daum_news_pool(kw, limit=DISPLAY_LIMIT)
@@ -105,7 +108,6 @@ def main():
             msg_body += "관련 기사 없음\n\n"
             continue
             
-        # 중복 제거 및 긴급 태그 처리
         seen_links = set()
         final_list = []
         for news in combined_news:
@@ -119,9 +121,8 @@ def main():
             msg_body += f"{urgent} [{news['portal']}] <a href='{news['link']}'>{safe_title}</a>\n"
         msg_body += "\n"
         
-    # 텔레그램 전송
     send_telegram_message(TELEGRAM_TOKEN, CHAT_ID, msg_body)
-    print("텔레그램 발송 완료!")
+    print("텔레그램 발송 시도 완료!")
 
 if __name__ == "__main__":
     main()
