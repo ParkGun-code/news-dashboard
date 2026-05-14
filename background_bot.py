@@ -85,9 +85,9 @@ def main():
     now_time = datetime.datetime.now(kst)
     
     # 아침 8시 ~ 저녁 6시 사이에만 작동하도록 설정 (현재 수동 테스트를 위해 임시 주석 처리함)
-    # if not (8 <= now_time.hour <= 18):
-    #     print("현재는 알림 발송 시간이 아닙니다.")
-    #     return
+    if not (8 <= now_time.hour <= 18):
+        print("현재는 알림 발송 시간이 아닙니다.")
+        return
 
     scraper = NewsScraper()
     msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
