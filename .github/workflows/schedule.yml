@@ -2,9 +2,9 @@ name: 24/7 News Auto Bot
 
 on:
   schedule:
-    # UTC 기준 매시 정각 (한국 시간으로 매 정각에 해당)
-    - cron: '0 * * * *'
-  workflow_dispatch: # 수동 테스트용 버튼
+    # 정각 트래픽을 피해 매시간 45분에 실행되도록 변경
+    - cron: '45 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
