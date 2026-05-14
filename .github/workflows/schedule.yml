@@ -1,0 +1,26 @@
+name: 24/7 News Auto Bot
+
+on:
+  schedule:
+    # UTC 기준 매시 정각 (한국 시간으로 매 정각에 해당)
+    - cron: '0 * * * *'
+  workflow_dispatch: # 수동 테스트용 버튼
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v3
+        
+      - name: 파이썬 설치
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: 필수 라이브러리 설치
+        run: |
+          pip install requests beautifulsoup4 feedparser
+          
+      - name: 백그라운드 봇 실행
+        run: python background_bot.py
