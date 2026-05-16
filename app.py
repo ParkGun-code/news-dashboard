@@ -32,8 +32,8 @@ def save_app_state():
     state = {
         "run_search": st.session_state.get("run_search", False),
         "selected_portals_key": st.session_state.get("selected_portals_key", ["네이버", "구글", "다음"]),
-        "selected_regions_key": st.session_state.get("selected_regions_key", ["대전", "충남"]),
-        "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진"),
+        "selected_regions_key": st.session_state.get("selected_regions_key", ["대전", "충남", "충북", "세종"]),
+        "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진"),
         "display_limit_key": st.session_state.get("display_limit_key", 10),
         "sort_combo_key": st.session_state.get("sort_combo_key", "중요도순"),
         "period_combo_key": st.session_state.get("period_combo_key", "오늘"),
