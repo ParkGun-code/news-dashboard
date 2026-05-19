@@ -34,7 +34,7 @@ def save_app_state():
         "selected_portals_key": st.session_state.get("selected_portals_key", ["네이버", "구글", "다음"]),
         "selected_regions_key": st.session_state.get("selected_regions_key", ["대전", "충남", "충북", "세종"]),
         "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진"),
-        "display_limit_key": st.session_state.get("display_limit_key", 10),
+        "display_limit_key": st.session_state.get("display_limit_key", 15),
         "sort_combo_key": st.session_state.get("sort_combo_key", "중요도순"),
         "period_combo_key": st.session_state.get("period_combo_key", "오늘"),
         "refresh_combo_key": st.session_state.get("refresh_combo_key", "1시간"),
@@ -52,9 +52,9 @@ if 'initialized' not in st.session_state:
     saved = load_app_state()
     st.session_state.run_search = saved.get("run_search", False)
     st.session_state.selected_portals_key = saved.get("selected_portals_key", ["네이버", "구글", "다음"])
-    st.session_state.selected_regions_key = saved.get("selected_regions_key", ["대전", "충남"])
-    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
-    st.session_state.display_limit_key = saved.get("display_limit_key", 10)
+    st.session_state.selected_regions_key = saved.get("selected_regions_key", ["대전", "충남", "충북", "세종"])
+    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진")
+    st.session_state.display_limit_key = saved.get("display_limit_key", 15)
     st.session_state.sort_combo_key = saved.get("sort_combo_key", "중요도순")
     st.session_state.period_combo_key = saved.get("period_combo_key", "오늘")
     st.session_state.refresh_combo_key = saved.get("refresh_combo_key", "1시간")
