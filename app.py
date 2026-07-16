@@ -589,7 +589,7 @@ if st.session_state.run_search:
                     with st.container(height=480, border=True):
                         st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
                         
-                        if not news_list:
+if not news_list:
                             st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
                             html_content = ""
@@ -601,24 +601,26 @@ if st.session_state.run_search:
                                 
                                 prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
-                                tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
+                                
+                                # 안전하게 HTML 엔티티로 변환
+                                safe_title = html.escape(title)
+                                safe_tooltip = html.escape(f"{prefix} {title}")
                                 
                                 if is_urgent:
                                     html_content += f"""
                                     <div class='news-item'>
                                         <span class='urgent-tag'>[긴급]</span>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a>
+                                        <span class='news-meta'>{html.escape(prefix)}</span>
+                                        <a href='{link}' class='news-link urgent-link' target='_blank' title='{safe_tooltip}'>{safe_title}</a>
                                     </div>
                                     """
                                 else:
                                     html_content += f"""
                                     <div class='news-item'>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a>
+                                        <span class='news-meta'>{html.escape(prefix)}</span>
+                                        <a href='{link}' class='news-link' target='_blank' title='{safe_tooltip}'>{safe_title}</a>
                                     </div>
                                     """
-                            
                             st.markdown(html_content, unsafe_allow_html=True)
 
     st.markdown("---")
