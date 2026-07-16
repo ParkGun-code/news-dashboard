@@ -9,7 +9,7 @@ from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 import feedparser
 import concurrent.futures
-from streamlit_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh 
 
 # --- 웹페이지 기본 설정 ---
 st.set_page_config(page_title="뉴스 모니터링 시스템", layout="wide")
@@ -60,6 +60,7 @@ if 'initialized' not in st.session_state:
     st.session_state.refresh_combo_key = saved.get("refresh_combo_key", "1시간")
     st.session_state.custom_minutes_key = saved.get("custom_minutes_key", 60)
     st.session_state.auto_tele_check_key = saved.get("auto_tele_check_key", True)
+
     st.session_state.last_fetch_time = None
     st.session_state.cached_results = {}
     st.session_state.cached_keywords = []
@@ -72,11 +73,13 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+
     .block-container {
         padding-top: 2.5rem;
         padding-bottom: 2rem;
         max-width: 1400px;
     }
+
     .main-header {
         font-size: 28px;
         font-weight: 700;
@@ -91,8 +94,9 @@ st.markdown("""
         border-bottom: 1px solid #e2e8f0;
         padding-bottom: 15px;
     }
+
     button[kind="primary"] {
-        background-color: #2563eb !important;
+        background-color: #2563eb !important; 
         color: white !important;
         border: none !important;
         border-radius: 6px !important;
@@ -101,11 +105,12 @@ st.markdown("""
         transition: all 0.2s ease !important;
     }
     button[kind="primary"]:hover {
-        background-color: #1d4ed8 !important;
+        background-color: #1d4ed8 !important; 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
     }
+
     .news-item {
-        padding: 4px 0;
+        padding: 4px 0; 
         border-bottom: 1px dashed #f1f5f9;
     }
     .news-item:last-child {
@@ -133,6 +138,7 @@ st.markdown("""
         color: #2563eb;
         text-decoration: underline;
     }
+
     .urgent-tag {
         color: #e11d48;
         font-weight: 700;
@@ -142,6 +148,7 @@ st.markdown("""
     .urgent-link {
         color: #be123c !important;
     }
+
     .card-title {
         font-size: 16px;
         font-weight: 700;
@@ -219,7 +226,7 @@ class NewsScraper:
                             if dt_date > end_date:
                                 continue
                             elif dt_date < start_date:
-                                stop_fetching = True
+                                stop_fetching = True 
                                 continue
                         else:
                             if not (start_date <= dt_date <= end_date):
@@ -290,12 +297,12 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
         for news in news_pool:
             matched_region = None
             if not selected_regions:
-                matched_region = "전체"
+                matched_region = "전체" 
             else:
                 for region in selected_regions:
                     if region in news['title'] or region in news['description']:
                         matched_region = region
-                        break
+                        break 
 
             if matched_region and news['link'] not in seen_links:
                 news_copy = news.copy()
@@ -346,7 +353,7 @@ def send_telegram_message(token, chat_id, text):
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True 
     }
     response = requests.post(url, json=payload)
     return response
@@ -372,7 +379,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
         selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, key="selected_regions_key")
 
-    st.write("")
+    st.write("") 
 
     col3, col4, col_sort, col5 = st.columns([3, 1, 1, 1.5])
     with col3:
@@ -390,7 +397,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
         if period_combo == "기간 선택":
-            date_range = st.date_input("날짜 지정 (시작일 - 종료일)",
+            date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
                                        value=(today_kst - datetime.timedelta(days=7), today_kst),
                                        max_value=today_kst)
             if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -463,6 +470,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 # ==========================================
 # 자동 갱신 및 뉴스 렌더링 영역
 # ==========================================
+
 if st.session_state.run_search:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
@@ -481,7 +489,7 @@ if st.session_state.run_search:
             # 현재 시간(시)이 마지막으로 보낸 시간(시)과 다르면 정각이 되었거나 처음 켰다는 뜻이므로 발송합니다.
             if st.session_state.last_tele_hour != curr_hour:
                 auto_tele_trigger = True
-                do_crawl = True
+                do_crawl = True 
 
     # 일반 웹 화면 갱신 체크 로직
     if st.session_state.last_fetch_time is None:
@@ -507,7 +515,7 @@ if st.session_state.run_search:
             if k not in keywords: keywords.append(k)
 
         scraper = NewsScraper(
-            naver_client_id="5p3Vuu15J3_qo3MMGOLl",
+            naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
             naver_client_secret="3Yx_9guJfU"
         )
 
@@ -548,7 +556,7 @@ if st.session_state.run_search:
 
             try:
                 send_telegram_message(tele_token, tele_chat_id, msg_body)
-                st.session_state.last_tele_hour = curr_hour
+                st.session_state.last_tele_hour = curr_hour 
                 st.toast("⏰ 정각 자동 텔레그램 메시지가 성공적으로 발송되었습니다!", icon="✅")
             except Exception as e:
                 st.error(f"❌ 텔레그램 자동 전송 중 오류 발생: {e}")
@@ -596,20 +604,9 @@ if st.session_state.run_search:
                                 tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
 
                                 if is_urgent:
-                                    html_content += f"""
-                                    <div class='news-item'>
-                                        <span class='urgent-tag'>[긴급]</span>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    </div>
-                                    """
+                                    html_content += f"<div class='news-item'><span class='urgent-tag'>[긴급]</span><span class='news-meta'>{prefix}</span><a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a></div>"
                                 else:
-                                    html_content += f"""
-                                    <div class='news-item'>
-                                        <span class='news-meta'>{prefix}</span>
-                                        <a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a>
-                                    </div>
-                                    """
+                                    html_content += f"<div class='news-item'><span class='news-meta'>{prefix}</span><a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a></div>"
 
                             st.markdown(html_content, unsafe_allow_html=True)
 
