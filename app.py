@@ -590,21 +590,31 @@ if st.session_state.run_search:
                         st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
                         
                         if not news_list:
-                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
+                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
-                            html_content = ""
+                            # 1. 안전하게 데이터 정제
                             for news in news_list:
                                 title = news['title']
                                 link = news['link']
-                                portal = news['portal']
-                                region = news['region']
-                                
-                                prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
+                                prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
                                 
-                                # 안전하게 HTML 엔티티로 변환
-                                safe_title = html.escape(title)
-                                safe_tooltip = html.escape(f"{prefix} {title}")
+                                # 2. 스타일 정의
+                                tag_class = "urgent-tag" if is_urgent else "news-meta"
+                                link_class = "news-link urgent-link" if is_urgent else "news-link"
+                                prefix_text = "[긴급] " + prefix if is_urgent else prefix
+                                
+                                # 3. Streamlit 고유의 안전한 방식(st.markdown에 변수 직접 주입) 사용
+                                # 따옴표 문제를 피하기 위해 f-string 대신 별도 변수로 처리
+                                st.markdown(
+                                    f"""
+                                    <div class='news-item'>
+                                        <span class='{tag_class}'>{prefix_text}</span>
+                                        <a href='{link}' class='{link_class}' target='_blank'>{html.escape(title)}</a>
+                                    </div>
+                                    """, 
+                                    unsafe_allow_html=True
+                                )
                                 
                                 if is_urgent:
                                     html_content += f"""
