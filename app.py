@@ -589,7 +589,7 @@ if st.session_state.run_search:
                     with st.container(height=480, border=True):
                         st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
                         
-if not news_list:
+                        if not news_list:
                             st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
                         else:
                             html_content = ""
