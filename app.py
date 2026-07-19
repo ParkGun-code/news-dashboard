@@ -613,7 +613,10 @@ if st.session_state.run_search:
     st.markdown("---")
 
     if st.button("📲 현재 화면의 뉴스를 텔레그램으로 수동 전송", use_container_width=True):
-        if not tele_token or not tele_chat_id:
+        kst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+        if not (8 <= kst_now.hour <= 18):
+            st.warning(f"⏰ 텔레그램 발송은 아침 8시 ~ 저녁 6시 사이에만 가능합니다. (현재 시각: {kst_now.strftime('%H:%M')})")
+        elif not tele_token or not tele_chat_id:
             st.warning("⚠️ 텔레그램 토큰 정보가 등록되지 않았습니다. (스트림릿 Settings -> Secrets에 설정해주세요)")
         else:
             with st.spinner("텔레그램으로 전송 중입니다..."):
