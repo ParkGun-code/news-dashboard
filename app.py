@@ -37,7 +37,7 @@ def save_app_state():
     state = {
         "run_search": st.session_state.get("run_search", False),
         "selected_portals_key": st.session_state.get("selected_portals_key", ["네이버", "구글", "다음"]),
-        "selected_regions_key": st.session_state.get("selected_regions_key", ["대전", "충남", "충북", "세종"]),
+        "selected_regions_key": st.session_state.get("selected_regions_key", []),
         "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진"),
         "display_limit_key": st.session_state.get("display_limit_key", 10),
         "sort_combo_key": st.session_state.get("sort_combo_key", "중요도순"),
@@ -73,8 +73,8 @@ if 'initialized' not in st.session_state:
     saved = load_app_state()
     st.session_state.run_search = saved.get("run_search", False)
     st.session_state.selected_portals_key = saved.get("selected_portals_key", ["네이버", "구글", "다음"])
-    st.session_state.selected_regions_key = saved.get("selected_regions_key", ["대전", "충남"])
-    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부|국토부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
+    st.session_state.selected_regions_key = saved.get("selected_regions_key", [])
+    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     st.session_state.display_limit_key = saved.get("display_limit_key", 10)
     st.session_state.sort_combo_key = saved.get("sort_combo_key", "중요도순")
     st.session_state.period_combo_key = saved.get("period_combo_key", "오늘")
@@ -205,7 +205,7 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self, days_back=7):
-        """기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별 및 캐시 안정화"""
+        """기상청 지진정보 조회서비스(getEqkMsg) 기반 국내 지진 선별[cite: 2]"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = (now + datetime.timedelta(days=1)).strftime("%Y%m%d")
@@ -223,7 +223,7 @@ class NewsScraper:
                 items = [items]
 
             domestic_fcTp_codes = ["3", "5", "10", "11", "14", 3, 5, 10, 11, 14][cite: 2]
-            foreign_keywords = ["일본", "대만", "중국", "러시아", "필리핀", "칠레", "인도네시아", "튀르키예", "바누아투", "피지", "통가", "사할린", "쿠릴"]
+            foreign_keywords = ["일본", "대만", "중국", "러시아", "필리핀", "칠레", "인도네시아", "튀르키예", "바누아투", "피지", "통가"]
             
             domestic_items = []
             for eq in items:
@@ -231,26 +231,23 @@ class NewsScraper:
                 loc = str(eq.get("loc", ""))
                 rem = str(eq.get("rem", ""))
                 
-                # 해외 지진 제외
                 if any(fk in loc for fk in foreign_keywords) or any(fk in rem for fk in ["국외지진", "국외 지진"]):
                     continue
                     
-                # 국내 통보종류 코드이거나 국내 지역명/해역인 경우 수집[cite: 2]
                 if fcTp in domestic_fcTp_codes or (fcTp is None and ("해역" in loc or "도" in loc or "시" in loc or "군" in loc or "국내" in loc)):
                     domestic_items.append(eq)
 
             if domestic_items:
                 domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
                 return domestic_items
-            else:
-                # 순간 응답 지연/누락 시 기존 캐시 반환
-                return st.session_state.get("cached_earthquake", [])
+            return st.session_state.get("cached_earthquake", [])
         except Exception:
             return st.session_state.get("cached_earthquake", [])
 
     def get_google_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
+        clean_kw = keyword.replace('|', ' OR ').replace('&', ' OR ')
         before_date = end_date + datetime.timedelta(days=1)
-        query = f"{keyword.replace('&', ' OR ')} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
+        query = f"{clean_kw} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
         encoded_query = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
@@ -280,7 +277,7 @@ class NewsScraper:
     def get_naver_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
         if not self.naver_client_id or not self.naver_client_secret:
             return []
-        query = keyword.replace('&', ' ')
+        clean_kw = keyword.replace('|', ' ').replace('&', ' ')
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {
             "X-Naver-Client-Id": self.naver_client_id,
@@ -291,7 +288,7 @@ class NewsScraper:
         for start in range(1, 1001, 100):
             display = min(100, 1001 - start)
             sort_param = "sim" if sort_method == 'sim' else "date"
-            params = {"query": query, "display": display, "start": start, "sort": sort_param}
+            params = {"query": clean_kw, "display": display, "start": start, "sort": sort_param}
             try:
                 response = requests.get(url, headers=headers, params=params)
                 response.raise_for_status()
@@ -326,8 +323,8 @@ class NewsScraper:
         return results[:limit]
 
     def get_daum_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
-        query = keyword.replace('&', ' ')
-        encoded_query = urllib.parse.quote(query)
+        clean_kw = keyword.replace('|', ' ').replace('&', ' ')
+        encoded_query = urllib.parse.quote(clean_kw)
         sd = start_date.strftime("%Y%m%d") + "000000"
         ed = end_date.strftime("%Y%m%d") + "235959"
 
@@ -470,6 +467,12 @@ def format_eqk_time(raw_time_str):
     return s
 
 # ==========================================
+# 🕒 날짜 계산 (전역 범위 보장)
+# ==========================================
+kst = datetime.timezone(datetime.timedelta(hours=9))
+today_kst = datetime.datetime.now(kst).date()
+
+# ==========================================
 # 메인 헤더
 # ==========================================
 st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국내 지진 모니터링</div>", unsafe_allow_html=True)
@@ -488,7 +491,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
         selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], key="selected_portals_key")
     with col2:
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
-        selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역)", all_regions, key="selected_regions_key")
+        selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, key="selected_regions_key")
 
     st.write("") 
 
@@ -501,9 +504,6 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
         sort_combo = st.selectbox("정렬 기준", ["중요도순", "최신순"], key="sort_combo_key")
     with col5:
         period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"], key="period_combo_key")
-
-    kst = datetime.timezone(datetime.timedelta(hours=9))
-    today_kst = datetime.datetime.now(kst).date()
 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
@@ -579,7 +579,6 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 # 자동 감시 루프 & 렌더링
 # ==========================================
 if st.session_state.run_search:
-    kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
 
     # 30초 주기로 백그라운드 자동 갱신
@@ -631,7 +630,7 @@ if st.session_state.run_search:
                     st.toast(f"⚡ 기상청 국내 지진 속보(지도 포함) 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 수집 및 정각 발송 (지진과 완전 분리)
+    # 📰 [2] 뉴스 수집 및 정각 발송 (날짜 안전 보장)
     # ----------------------------------------------------
     do_news_crawl = False
     send_scheduled_news = False
@@ -651,9 +650,7 @@ if st.session_state.run_search:
             do_news_crawl = True
 
     if do_news_crawl:
-        if not selected_portals or not keywords_str.strip():
-            st.stop()
-
+        active_portals = selected_portals if selected_portals else ["네이버", "구글", "다음"]
         raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
         keywords = []
         for k in raw_keywords:
@@ -661,9 +658,15 @@ if st.session_state.run_search:
 
         sort_method_val = 'sim' if sort_combo == "중요도순" else 'date'
 
+        # 검색 시작일 및 종료일 안전 보장
+        if 'start_date' not in locals():
+            start_date = today_kst
+        if 'end_date' not in locals():
+            end_date = today_kst
+
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
+            future_to_kw = {executor.submit(fetch_single_keyword, kw, active_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
             for future in concurrent.futures.as_completed(future_to_kw):
                 kw = future_to_kw[future]
                 try:
