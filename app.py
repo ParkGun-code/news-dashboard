@@ -19,10 +19,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="실시간 뉴스 & 기상청 국내 지진 모니터링", layout="wide")
 
 # ==========================================
-# 💾 상태 및 지진 알림 이력 관리
+# 💾 상태 및 지진 데이터 영구 보관 파일 관리
 # ==========================================
 STATE_FILE = "app_state.json"
 SENT_EQK_FILE = "sent_earthquakes.json"
+EQK_HISTORY_FILE = "earthquake_history.json"
 
 def load_app_state():
     if os.path.exists(STATE_FILE):
@@ -68,6 +69,24 @@ def save_sent_eqk(sent_set):
     except Exception:
         pass
 
+def load_eqk_history():
+    """대시보드 상단 표출용 최근 지진 3건 히스토리 로드"""
+    if os.path.exists(EQK_HISTORY_FILE):
+        try:
+            with open(EQK_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_eqk_history(history_list):
+    """항상 최신 3건만 유지하도록 저장"""
+    try:
+        with open(EQK_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history_list[:3], f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
 # --- 세션 스토리지 초기화 ---
 if 'initialized' not in st.session_state:
     saved = load_app_state()
@@ -85,7 +104,7 @@ if 'initialized' not in st.session_state:
     st.session_state.last_fetch_time = None
     st.session_state.cached_results = {}
     st.session_state.cached_keywords = []
-    st.session_state.cached_earthquake = []
+    st.session_state.cached_earthquake = load_eqk_history()
     st.session_state.sent_eqk_set = load_sent_eqk()
     st.session_state.last_tele_hour = None
     st.session_state.initialized = True
@@ -93,7 +112,7 @@ if 'initialized' not in st.session_state:
 if 'sent_eqk_set' not in st.session_state:
     st.session_state.sent_eqk_set = load_sent_eqk()
 if 'cached_earthquake' not in st.session_state:
-    st.session_state.cached_earthquake = []
+    st.session_state.cached_earthquake = load_eqk_history()
 
 # --- 🎨 커스텀 CSS ---
 st.markdown("""
@@ -204,7 +223,8 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
-    def fetch_kma_domestic_earthquakes(self, days_back=7):
+    def fetch_kma_domestic_earthquakes(self, days_back=14):
+        """기상청 국내 지진 데이터 조회 및 최신 정렬"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = (now + datetime.timedelta(days=1)).strftime("%Y%m%d")
@@ -238,9 +258,9 @@ class NewsScraper:
             if domestic_items:
                 domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
                 return domestic_items
-            return st.session_state.get("cached_earthquake", [])
+            return load_eqk_history()
         except Exception:
-            return st.session_state.get("cached_earthquake", [])
+            return load_eqk_history()
 
     def get_google_news_pool(self, keyword, start_date, end_date, limit=100, sort_method='sim'):
         clean_kw = keyword.replace('|', ' ').replace('&', ' ')
@@ -400,7 +420,7 @@ today_kst = datetime.datetime.now(kst).date()
 st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국내 지진 모니터링</div>", unsafe_allow_html=True)
 
 if st.session_state.run_search:
-    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 신규 국내 지진 발생 시 텔레그램 속보가 즉시 전송되며 뉴스가 실시간 갱신됩니다.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 신규 국내 지진 발생 시 텔레그램 속보가 단독 즉시 전송되며 뉴스가 실시간 갱신됩니다.</div>", unsafe_allow_html=True)
 else:
     st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
@@ -476,7 +496,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 
     st.markdown("#### 📱 텔레그램 연동 상태")
     auto_tele_check = st.checkbox("⏰ 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 진앙 지도와 함께 즉시 단독 전송됩니다.")
+    st.caption("※ **기상청 국내 신규 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 진앙 지도와 함께 텔레그램으로 즉시 단독 전송됩니다.")
 
     st.write("")
 
@@ -492,7 +512,6 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
         if st.button("🛑 감시 중지 및 초기화", use_container_width=True):
             st.session_state.run_search = False
             st.session_state.cached_results = {}
-            st.session_state.cached_earthquake = []
             st.session_state.last_fetch_time = None
             save_app_state()
             st.rerun()
@@ -512,15 +531,33 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 실시간 국내 지진 전송
+    # 🚨 [1] 최근 3건 유지 및 신규 발생 지진 단독 전송 로직
     # ----------------------------------------------------
-    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=7)
-    st.session_state.cached_earthquake = domestic_eqks
+    fetched_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=14)
+    current_history = load_eqk_history()
 
+    # 신규 지진 수집 시 3건 목록 업데이트 (FIFO 교체)
+    if fetched_eqks:
+        history_ids = {f"{e.get('tmEqk')}_{e.get('loc')}_{e.get('mt')}" for e in current_history}
+        updated = False
+        for eq in reversed(fetched_eqks):
+            eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
+            if eq_id not in history_ids:
+                current_history.insert(0, eq)
+                history_ids.add(eq_id)
+                updated = True
+        
+        # 항상 최신 3건으로 슬라이싱 후 영구 저장
+        current_history = current_history[:3]
+        if updated or not os.path.exists(EQK_HISTORY_FILE):
+            save_eqk_history(current_history)
+
+    st.session_state.cached_earthquake = current_history
     sent_set = st.session_state.get('sent_eqk_set', set())
 
-    if tele_token and tele_chat_id and domestic_eqks:
-        for eq in domestic_eqks:
+    # 텔레그램 발송은 '오직 새롭게 수집된 미발송 지진'만 단독 즉시 전송
+    if tele_token and tele_chat_id and fetched_eqks:
+        for eq in fetched_eqks:
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
             
             if eq_id not in sent_set:
@@ -549,7 +586,7 @@ if st.session_state.run_search:
                     sent_set.add(eq_id)
                     st.session_state.sent_eqk_set = sent_set
                     save_sent_eqk(sent_set)
-                    st.toast(f"⚡ 기상청 국내 지진 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
+                    st.toast(f"⚡ 신규 국내 지진 속보 단독 발송: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
     # 📰 [2] 뉴스 수집 및 정각 발송
@@ -628,35 +665,46 @@ if st.session_state.run_search:
 
     st.caption(f"⚡ 기상청 국내 지진 실시간 감시: 30초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
 
-    # 기상청 국내 지진 현황 배너
+    # 기상청 국내 지진 현황 배너 (항상 최신 3건 상시 고정)
     with st.container(border=True):
-        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 관측 건)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최신 3건 상시 표출)</div>", unsafe_allow_html=True)
         if not cached_earthquake:
-            st.info("최근 관측된 국내 지진 발표문이 없습니다.")
+            st.info("현재 보관된 국내 지진 관측 데이터가 없습니다.")
         else:
-            eq_cols = st.columns(min(len(cached_earthquake), 3))
-            for idx, eq in enumerate(cached_earthquake[:3]):
+            eq_cols = st.columns(3)
+            for idx in range(3):
                 with eq_cols[idx]:
-                    tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
-                    img_url = eq.get('img')[cite: 2]
-                    
-                    st.markdown(
-                        f"""
-                        <div style='background-color:#fff1f2; padding:14px; border-radius:8px; border:1px solid #fecdd3;'>
-                            <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
-                            <span style='font-size:13px; color:#334155;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
-                            <span style='font-size:13px; color:#334155;'>• 발생깊이: {eq.get('dep', '-')} km</span><br>
-                            <span style='font-size:12px; color:#64748b;'>• 발생시각: {tm_eqk_f}</span><br>
-                            <span style='font-size:12px; color:#475569;'>• 상세: {eq.get('rem', '-')}</span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                    if img_url and isinstance(img_url, str) and img_url.startswith("http"):
-                        try:
-                            st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
-                        except Exception:
-                            pass
+                    if idx < len(cached_earthquake):
+                        eq = cached_earthquake[idx]
+                        tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
+                        img_url = eq.get('img')[cite: 2]
+                        
+                        st.markdown(
+                            f"""
+                            <div style='background-color:#fff1f2; padding:14px; border-radius:8px; border:1px solid #fecdd3; min-height:160px;'>
+                                <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
+                                <span style='font-size:13px; color:#334155;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
+                                <span style='font-size:13px; color:#334155;'>• 발생깊이: {eq.get('dep', '-')} km</span><br>
+                                <span style='font-size:12px; color:#64748b;'>• 발생시각: {tm_eqk_f}</span><br>
+                                <span style='font-size:12px; color:#475569;'>• 상세: {eq.get('rem', '-')}</span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        if img_url and isinstance(img_url, str) and img_url.startswith("http"):
+                            try:
+                                st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
+                            except Exception:
+                                pass
+                    else:
+                        st.markdown(
+                            """
+                            <div style='background-color:#f8fafc; padding:14px; border-radius:8px; border:1px dashed #cbd5e1; min-height:160px; text-align:center; color:#94a3b8; line-height:130px;'>
+                                관측 대기 중
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
