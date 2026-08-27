@@ -204,11 +204,11 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
-    def fetch_kma_domestic_earthquakes(self, days_back=3):
-        """기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별[cite: 2]"""
+    def fetch_kma_domestic_earthquakes(self, days_back=7):
+        """기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별 및 캐시 안정화"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
-        to_tm = now.strftime("%Y%m%d")
+        to_tm = (now + datetime.timedelta(days=1)).strftime("%Y%m%d")
         
         url = (
             f"http://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
@@ -218,26 +218,35 @@ class NewsScraper:
             res = requests.get(url, timeout=10, verify=False)
             data = res.json()
             
-            header = data.get("response", {}).get("header", {})
-            if str(header.get("resultCode")) not in ["00", "0"]:
-                return []
-
             items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
             if isinstance(items, dict):
                 items = [items]
 
-            domestic_fcTp_codes = ["3", "5", "10", "11", "14", 3, 5, 10, 11, 14]
+            domestic_fcTp_codes = ["3", "5", "10", "11", "14", 3, 5, 10, 11, 14][cite: 2]
+            foreign_keywords = ["일본", "대만", "중국", "러시아", "필리핀", "칠레", "인도네시아", "튀르키예", "바누아투", "피지", "통가", "사할린", "쿠릴"]
+            
             domestic_items = []
             for eq in items:
                 fcTp = eq.get("fcTp")
                 loc = str(eq.get("loc", ""))
-                if fcTp in domestic_fcTp_codes or (fcTp is None and not any(fk in loc for fk in ["일본", "대만", "중국", "러시아", "필리핀", "칠레"])):
+                rem = str(eq.get("rem", ""))
+                
+                # 해외 지진 제외
+                if any(fk in loc for fk in foreign_keywords) or any(fk in rem for fk in ["국외지진", "국외 지진"]):
+                    continue
+                    
+                # 국내 통보종류 코드이거나 국내 지역명/해역인 경우 수집[cite: 2]
+                if fcTp in domestic_fcTp_codes or (fcTp is None and ("해역" in loc or "도" in loc or "시" in loc or "군" in loc or "국내" in loc)):
                     domestic_items.append(eq)
 
-            domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
-            return domestic_items
+            if domestic_items:
+                domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
+                return domestic_items
+            else:
+                # 순간 응답 지연/누락 시 기존 캐시 반환
+                return st.session_state.get("cached_earthquake", [])
         except Exception:
-            return []
+            return st.session_state.get("cached_earthquake", [])
 
     def get_google_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
         before_date = end_date + datetime.timedelta(days=1)
@@ -435,7 +444,7 @@ def send_telegram_message(token, chat_id, text):
         return None
 
 def send_telegram_photo(token, chat_id, photo_url, caption):
-    """지진 지도 이미지와 함께 텔레그램 사진 메시지 전송 (실패 시 텍스트로 대체)"""
+    """지진 지도 이미지와 함께 텔레그램 사진 메시지 전송 (실패 시 텍스트 전송 대체)"""
     if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
@@ -447,12 +456,10 @@ def send_telegram_photo(token, chat_id, photo_url, caption):
     }
     try:
         response = requests.post(url, json=payload, timeout=12)
-        # 이미지 전송 성공 시 응답 반환
         if response.status_code == 200:
             return response
     except Exception:
         pass
-    # 이미지 전송 불가 시 일반 텍스트 전송으로 대체
     return send_telegram_message(token, chat_id, caption)
 
 def format_eqk_time(raw_time_str):
@@ -586,7 +593,7 @@ if st.session_state.run_search:
     # ----------------------------------------------------
     # 🚨 [1] 실시간 국내 지진 전송 (이미지 첨부 + 단독 실행)
     # ----------------------------------------------------
-    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
+    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=7)
     st.session_state.cached_earthquake = domestic_eqks
 
     sent_set = st.session_state.get('sent_eqk_set', set())
@@ -598,7 +605,7 @@ if st.session_state.run_search:
             if eq_id not in sent_set:
                 tm_eqk_formatted = format_eqk_time(eq.get('tmEqk', '-'))
                 tm_fc_formatted = format_eqk_time(eq.get('tmFc', '-'))
-                img_url = eq.get('img')
+                img_url = eq.get('img')[cite: 2]
                 
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 국내 지진 긴급 속보]</b>\n"
@@ -612,7 +619,6 @@ if st.session_state.run_search:
                     f"📝 <b>상세:</b> {eq.get('rem', '')}"
                 )
 
-                # 진앙 지도 이미지 URL이 유효하면 사진 메시지로 전송
                 if img_url and str(img_url).startswith("http"):
                     res = send_telegram_photo(tele_token, tele_chat_id, img_url, eq_alert_msg)
                 else:
@@ -701,15 +707,15 @@ if st.session_state.run_search:
 
     # 기상청 국내 지진 현황 배너
     with st.container(border=True):
-        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 3일 이내 발표건)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 관측 건)</div>", unsafe_allow_html=True)
         if not cached_earthquake:
-            st.info("최근 3일간 관측된 국내 지진 발표문이 없습니다.")
+            st.info("최근 관측된 국내 지진 발표문이 없습니다.")
         else:
             eq_cols = st.columns(min(len(cached_earthquake), 3))
             for idx, eq in enumerate(cached_earthquake[:3]):
                 with eq_cols[idx]:
                     tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
-                    img_url = eq.get('img')
+                    img_url = eq.get('img')[cite: 2]
                     
                     st.markdown(
                         f"""
