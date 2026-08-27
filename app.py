@@ -68,7 +68,7 @@ def save_sent_eqk(sent_set):
     except Exception:
         pass
 
-# --- 세션 스토리지 초기화 ---
+# --- 세션 스토리지 초기화 (키 미존재 시 자동 복구 포함) ---
 if 'initialized' not in st.session_state:
     saved = load_app_state()
     st.session_state.run_search = saved.get("run_search", False)
@@ -89,6 +89,12 @@ if 'initialized' not in st.session_state:
     st.session_state.sent_eqk_set = load_sent_eqk()
     st.session_state.last_tele_hour = None
     st.session_state.initialized = True
+
+# 기존 세션 복구 방어 코드 (AttributeError 방지)
+if 'sent_eqk_set' not in st.session_state:
+    st.session_state.sent_eqk_set = load_sent_eqk()
+if 'cached_earthquake' not in st.session_state:
+    st.session_state.cached_earthquake = []
 
 # --- 🎨 커스텀 CSS ---
 st.markdown("""
@@ -553,12 +559,14 @@ if st.session_state.run_search:
     domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
     st.session_state.cached_earthquake = domestic_eqks
 
+    sent_set = st.session_state.get('sent_eqk_set', set())
+
     if tele_token and tele_chat_id and domestic_eqks:
         for eq in domestic_eqks:
             # 고유 지진 ID 식별 (발생시각_진앙_규모)
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
             
-            if eq_id not in st.session_state.sent_eqk_set:
+            if eq_id not in sent_set:
                 # 신규 발생한 국내 지진 즉시 단독 텔레그램 전송
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 지진 긴급 속보]</b>\n"
@@ -572,8 +580,9 @@ if st.session_state.run_search:
                 )
                 res = send_telegram_message(tele_token, tele_chat_id, eq_alert_msg)
                 if res and res.status_code == 200:
-                    st.session_state.sent_eqk_set.add(eq_id)
-                    save_sent_eqk(st.session_state.sent_eqk_set)
+                    sent_set.add(eq_id)
+                    st.session_state.sent_eqk_set = sent_set
+                    save_sent_eqk(sent_set)
                     st.toast(f"⚡ 신규 국내 지진 긴급 속보를 텔레그램으로 즉시 발송했습니다! (M{eq.get('mt')})", icon="🚨")
 
     # ----------------------------------------------------
