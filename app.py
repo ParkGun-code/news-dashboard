@@ -205,14 +205,8 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self, days_back=3):
-        """
-        기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별
-        fcTp (통보종류):
-          - 3: 국내 지진정보, 5: 국내 지진정보(재통보)
-          - 10: 지진현장경보, 11: 국내 지진조기경보, 14: 지진속보
-        """
+        """기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별[cite: 2]"""
         now = datetime.datetime.now(self.kst)
-        # 기상청 가이드: 최근 3일 이내 자료 제공
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
         
@@ -220,7 +214,6 @@ class NewsScraper:
             f"http://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
             f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=50&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
         )
-        
         try:
             res = requests.get(url, timeout=10, verify=False)
             data = res.json()
@@ -233,19 +226,14 @@ class NewsScraper:
             if isinstance(items, dict):
                 items = [items]
 
-            # 기상청 공식 국내 통보종류 코드 목록
             domestic_fcTp_codes = ["3", "5", "10", "11", "14", 3, 5, 10, 11, 14]
-            
             domestic_items = []
             for eq in items:
                 fcTp = eq.get("fcTp")
                 loc = str(eq.get("loc", ""))
-                
-                # 통보코드가 국내이거나, 위치에 국내 지역/해역이 포함된 경우
                 if fcTp in domestic_fcTp_codes or (fcTp is None and not any(fk in loc for fk in ["일본", "대만", "중국", "러시아", "필리핀", "칠레"])):
                     domestic_items.append(eq)
 
-            # 지진 발생 시각(tmEqk) 기준 내림차순 정렬
             domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
             return domestic_items
         except Exception:
@@ -430,7 +418,7 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     return (urgent_news + mixed_normal)[:limit]
 
 def send_telegram_message(token, chat_id, text):
-    """텔레그램 메시지 전송"""
+    """일반 텍스트 텔레그램 메시지 전송"""
     if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -446,8 +434,29 @@ def send_telegram_message(token, chat_id, text):
     except Exception:
         return None
 
+def send_telegram_photo(token, chat_id, photo_url, caption):
+    """지진 지도 이미지와 함께 텔레그램 사진 메시지 전송 (실패 시 텍스트로 대체)"""
+    if not token or not chat_id:
+        return None
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    payload = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "HTML"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=12)
+        # 이미지 전송 성공 시 응답 반환
+        if response.status_code == 200:
+            return response
+    except Exception:
+        pass
+    # 이미지 전송 불가 시 일반 텍스트 전송으로 대체
+    return send_telegram_message(token, chat_id, caption)
+
 def format_eqk_time(raw_time_str):
-    """'20260827123000' 형태의 기상청 날짜를 읽기 쉽게 포맷"""
+    """'20260827123000' 형태의 기상청 날짜 포맷"""
     s = str(raw_time_str).strip()
     if len(s) >= 12:
         return f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}" + (f":{s[12:14]}" if len(s) >= 14 else "")
@@ -459,7 +468,7 @@ def format_eqk_time(raw_time_str):
 st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국내 지진 모니터링</div>", unsafe_allow_html=True)
 
 if st.session_state.run_search:
-    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 텔레그램 속보가 단독 즉시 전송됩니다.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 진앙 위치도와 함께 텔레그램 속보가 단독 즉시 전송됩니다.</div>", unsafe_allow_html=True)
 else:
     st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
@@ -538,7 +547,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 
     st.markdown("#### 📱 텔레그램 연동 상태")
     auto_tele_check = st.checkbox("⏰ 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 발생 즉시 텔레그램으로 단독 전송됩니다.")
+    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 진앙 지도와 함께 즉시 단독 전송됩니다.")
 
     st.write("")
 
@@ -575,7 +584,7 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 실시간 기상청 국내 지진 단독 즉시 발송 (30초마다 체크)
+    # 🚨 [1] 실시간 국내 지진 전송 (이미지 첨부 + 단독 실행)
     # ----------------------------------------------------
     domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
     st.session_state.cached_earthquake = domestic_eqks
@@ -589,41 +598,48 @@ if st.session_state.run_search:
             if eq_id not in sent_set:
                 tm_eqk_formatted = format_eqk_time(eq.get('tmEqk', '-'))
                 tm_fc_formatted = format_eqk_time(eq.get('tmFc', '-'))
+                img_url = eq.get('img')
                 
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 국내 지진 긴급 속보]</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📍 <b>진앙:</b> {eq.get('loc', '국내 관측')}\n"
-                    f"💥 <b>규모:</b> M{eq.get('mt', '-')} (진도: {eq.get('inT', '-')})\n"
+                    f"💥 <b>규모:</b> M{eq.get('mt', '-')} (최대진도: {eq.get('inT', '-')})\n"
                     f"📏 <b>발생깊이:</b> {eq.get('dep', '-')} km\n"
                     f"⏱ <b>발생시각:</b> {tm_eqk_formatted}\n"
                     f"📢 <b>발표시각:</b> {tm_fc_formatted}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📝 <b>상세:</b> {eq.get('rem', '')}"
                 )
-                res = send_telegram_message(tele_token, tele_chat_id, eq_alert_msg)
+
+                # 진앙 지도 이미지 URL이 유효하면 사진 메시지로 전송
+                if img_url and str(img_url).startswith("http"):
+                    res = send_telegram_photo(tele_token, tele_chat_id, img_url, eq_alert_msg)
+                else:
+                    res = send_telegram_message(tele_token, tele_chat_id, eq_alert_msg)
+
                 if res and res.status_code == 200:
                     sent_set.add(eq_id)
                     st.session_state.sent_eqk_set = sent_set
                     save_sent_eqk(sent_set)
-                    st.toast(f"⚡ 기상청 국내 지진 긴급 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
+                    st.toast(f"⚡ 기상청 국내 지진 속보(지도 포함) 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 기사 정기 수집 및 정각 발송
+    # 📰 [2] 뉴스 수집 및 정각 발송 (지진과 완전 분리)
     # ----------------------------------------------------
     do_news_crawl = False
-    auto_tele_trigger = False
+    send_scheduled_news = False
     curr_hour = now_time.hour
 
     if auto_tele_check and tele_token and tele_chat_id:
         if 8 <= curr_hour <= 18:
             if st.session_state.last_tele_hour != curr_hour:
-                auto_tele_trigger = True
+                send_scheduled_news = True
                 do_news_crawl = True 
 
     if st.session_state.last_fetch_time is None:
         do_news_crawl = True
-    elif not auto_tele_trigger and refresh_minutes > 0:
+    elif not send_scheduled_news and refresh_minutes > 0:
         diff_seconds = (now_time - st.session_state.last_fetch_time).total_seconds()
         if diff_seconds >= (refresh_minutes * 60 - 5):
             do_news_crawl = True
@@ -653,7 +669,8 @@ if st.session_state.run_search:
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        if auto_tele_trigger:
+        # 오직 정각일 때만 뉴스 전송
+        if send_scheduled_news:
             news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
                 news_list = results_dict.get(kw, [])
@@ -698,7 +715,7 @@ if st.session_state.run_search:
                         f"""
                         <div style='background-color:#fff1f2; padding:14px; border-radius:8px; border:1px solid #fecdd3;'>
                             <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
-                            <span style='font-size:13px; color:#334155;'>• 규모: <b>M{eq.get('mt', '-')}</b> (진도: {eq.get('inT', '-')})</span><br>
+                            <span style='font-size:13px; color:#334155;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
                             <span style='font-size:13px; color:#334155;'>• 발생깊이: {eq.get('dep', '-')} km</span><br>
                             <span style='font-size:12px; color:#64748b;'>• 발생시각: {tm_eqk_f}</span><br>
                             <span style='font-size:12px; color:#475569;'>• 상세: {eq.get('rem', '-')}</span>
