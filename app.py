@@ -204,39 +204,48 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
-    def fetch_kma_domestic_earthquakes(self, days_back=7):
-        """기상청 국내 지진 통보문 정밀 조회"""
+    def fetch_kma_domestic_earthquakes(self, days_back=3):
+        """
+        기상청 지진정보 조회서비스(getEqkMsg) 공식 명세 기반 국내 지진 선별
+        fcTp (통보종류):
+          - 3: 국내 지진정보, 5: 국내 지진정보(재통보)
+          - 10: 지진현장경보, 11: 국내 지진조기경보, 14: 지진속보
+        """
         now = datetime.datetime.now(self.kst)
+        # 기상청 가이드: 최근 3일 이내 자료 제공
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
+        
         url = (
             f"http://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
             f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=50&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
         )
+        
         try:
             res = requests.get(url, timeout=10, verify=False)
             data = res.json()
+            
+            header = data.get("response", {}).get("header", {})
+            if str(header.get("resultCode")) not in ["00", "0"]:
+                return []
+
             items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
             if isinstance(items, dict):
                 items = [items]
 
-            foreign_keywords = ["일본", "대만", "중국", "러시아", "필리핀", "인도네시아", "칠레", "미국", "멕시코", "튀르키예", "바누아투", "피지", "통가", "사할린", "쿠릴"]
-            domestic_regions = ["서울", "경기", "인천", "강원", "충북", "충남", "대전", "세종", "전북", "전남", "광주", "경북", "경남", "대구", "울산", "부산", "제주", "해역", "동해", "서해", "남해"]
+            # 기상청 공식 국내 통보종류 코드 목록
+            domestic_fcTp_codes = ["3", "5", "10", "11", "14", 3, 5, 10, 11, 14]
             
             domestic_items = []
             for eq in items:
+                fcTp = eq.get("fcTp")
                 loc = str(eq.get("loc", ""))
-                rem = str(eq.get("rem", ""))
                 
-                # 명확한 국외 지진 키워드 배제
-                if any(fk in loc for fk in foreign_keywords):
-                    continue
-                
-                # 국내 관측 지진 식별
-                is_domestic = any(dr in loc for dr in domestic_regions) or ("국내" in loc) or ("국내" in rem)
-                if is_domestic:
+                # 통보코드가 국내이거나, 위치에 국내 지역/해역이 포함된 경우
+                if fcTp in domestic_fcTp_codes or (fcTp is None and not any(fk in loc for fk in ["일본", "대만", "중국", "러시아", "필리핀", "칠레"])):
                     domestic_items.append(eq)
 
+            # 지진 발생 시각(tmEqk) 기준 내림차순 정렬
             domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
             return domestic_items
         except Exception:
@@ -437,6 +446,13 @@ def send_telegram_message(token, chat_id, text):
     except Exception:
         return None
 
+def format_eqk_time(raw_time_str):
+    """'20260827123000' 형태의 기상청 날짜를 읽기 쉽게 포맷"""
+    s = str(raw_time_str).strip()
+    if len(s) >= 12:
+        return f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}" + (f":{s[12:14]}" if len(s) >= 14 else "")
+    return s
+
 # ==========================================
 # 메인 헤더
 # ==========================================
@@ -559,9 +575,9 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 실시간 국내 지진 단독 즉시 발송 (30초마다 체크)
+    # 🚨 [1] 실시간 기상청 국내 지진 단독 즉시 발송 (30초마다 체크)
     # ----------------------------------------------------
-    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=7)
+    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
     st.session_state.cached_earthquake = domestic_eqks
 
     sent_set = st.session_state.get('sent_eqk_set', set())
@@ -571,13 +587,17 @@ if st.session_state.run_search:
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
             
             if eq_id not in sent_set:
+                tm_eqk_formatted = format_eqk_time(eq.get('tmEqk', '-'))
+                tm_fc_formatted = format_eqk_time(eq.get('tmFc', '-'))
+                
                 eq_alert_msg = (
-                    f"🚨 <b>[기상청 지진 긴급 속보]</b>\n"
+                    f"🚨 <b>[기상청 국내 지진 긴급 속보]</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📍 <b>진앙:</b> {eq.get('loc', '국내 관측')}\n"
-                    f"💥 <b>규모:</b> M{eq.get('mt', '-')} (최대진도: {eq.get('inT', '-')})\n"
+                    f"💥 <b>규모:</b> M{eq.get('mt', '-')} (진도: {eq.get('inT', '-')})\n"
                     f"📏 <b>발생깊이:</b> {eq.get('dep', '-')} km\n"
-                    f"⏱ <b>발생시각:</b> {eq.get('tmEqk', '-')}\n"
+                    f"⏱ <b>발생시각:</b> {tm_eqk_formatted}\n"
+                    f"📢 <b>발표시각:</b> {tm_fc_formatted}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📝 <b>상세:</b> {eq.get('rem', '')}"
                 )
@@ -586,7 +606,7 @@ if st.session_state.run_search:
                     sent_set.add(eq_id)
                     st.session_state.sent_eqk_set = sent_set
                     save_sent_eqk(sent_set)
-                    st.toast(f"⚡ 신규 국내 지진 긴급 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
+                    st.toast(f"⚡ 기상청 국내 지진 긴급 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
     # 📰 [2] 뉴스 기사 정기 수집 및 정각 발송
@@ -660,28 +680,34 @@ if st.session_state.run_search:
     last_fetch_time = st.session_state.get('last_fetch_time')
     current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
 
-    st.caption(f"⚡ 지진 실시간 감시: 30초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
+    st.caption(f"⚡ 기상청 국내 지진 실시간 감시: 30초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
 
     # 기상청 국내 지진 현황 배너
     with st.container(border=True):
-        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 7일 국내 관측 건)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 3일 이내 발표건)</div>", unsafe_allow_html=True)
         if not cached_earthquake:
-            st.info("최근 7일간 관측된 국내 지진이 없습니다.")
+            st.info("최근 3일간 관측된 국내 지진 발표문이 없습니다.")
         else:
             eq_cols = st.columns(min(len(cached_earthquake), 3))
             for idx, eq in enumerate(cached_earthquake[:3]):
                 with eq_cols[idx]:
+                    tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
+                    img_url = eq.get('img')
+                    
                     st.markdown(
                         f"""
-                        <div style='background-color:#fff1f2; padding:12px; border-radius:8px; border:1px solid #fecdd3;'>
+                        <div style='background-color:#fff1f2; padding:14px; border-radius:8px; border:1px solid #fecdd3;'>
                             <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
-                            <span style='font-size:13px; color:#475569;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
-                            <span style='font-size:13px; color:#475569;'>• 깊이: {eq.get('dep', '-')} km</span><br>
-                            <span style='font-size:12px; color:#64748b;'>• 시각: {eq.get('tmEqk', '-')}</span>
+                            <span style='font-size:13px; color:#334155;'>• 규모: <b>M{eq.get('mt', '-')}</b> (진도: {eq.get('inT', '-')})</span><br>
+                            <span style='font-size:13px; color:#334155;'>• 발생깊이: {eq.get('dep', '-')} km</span><br>
+                            <span style='font-size:12px; color:#64748b;'>• 발생시각: {tm_eqk_f}</span><br>
+                            <span style='font-size:12px; color:#475569;'>• 상세: {eq.get('rem', '-')}</span>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
+                    if img_url and str(img_url).startswith("http"):
+                        st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
