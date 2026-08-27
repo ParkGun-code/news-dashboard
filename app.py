@@ -222,7 +222,7 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self):
-        """기상청 지진정보 공식 가이드 규격 준수 (최근 3일 이내)"""
+        """기상청 지진정보 공식 가이드 규격 준수 (최근 3일 이내)[cite: 2]"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=3)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
@@ -372,12 +372,6 @@ class NewsScraper:
         return results[:limit]
 
 def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, limit, start_date, end_date, sort_method):
-    """
-    원래 작성하셨던 구조 그대로 복원:
-    1. 원본 키워드로 포털에서 뉴스를 크게 수집
-    2. 수집된 뉴스 중 선택된 지역(대전, 충남 등)이 포함된 기사만 매핑 및 보존
-    3. 선택된 지역이 없을 때만 전체 기사 허용
-    """
     portal_methods = {
         "네이버": scraper.get_naver_news_pool,
         "구글": scraper.get_google_news_pool,
@@ -402,7 +396,6 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
                         matched_region = region
                         break 
 
-            # 선택된 지역이 있을 때 해당 지역명이 들어간 기사만 통과시킴
             if matched_region and news['link'] not in seen_links:
                 news_copy = news.copy()
                 news_copy['region'] = matched_region
@@ -636,7 +629,7 @@ if st.session_state.run_search:
             if eq_id not in sent_set:
                 tm_eqk_formatted = format_eqk_time(eq.get('tmEqk', '-'))
                 tm_fc_formatted = format_eqk_time(eq.get('tmFc', '-'))
-                img_url = eq.get('img')
+                img_url = eq.get('img')[cite: 2]
                 
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 국내 지진 긴급 속보]</b>\n"
@@ -703,7 +696,7 @@ if st.session_state.run_search:
             end_date = today_kst
 
         results_dict = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
             for future in concurrent.futures.as_completed(future_to_kw):
                 kw = future_to_kw[future]
@@ -757,7 +750,7 @@ if st.session_state.run_search:
                     if idx < len(cached_earthquake):
                         eq = cached_earthquake[idx]
                         tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
-                        img_url = eq.get('img')
+                        img_url = eq.get('img')[cite: 2]
                         
                         st.markdown(
                             f"""
@@ -820,29 +813,67 @@ if st.session_state.run_search:
 
     st.markdown("---")
 
-    # 수동 전송 버튼
-    if st.button("📲 현재 수집된 뉴스만 텔레그램으로 수동 전송", use_container_width=True):
-        kst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
-        if not (8 <= kst_now.hour <= 18):
-            st.warning(f"⏰ 텔레그램 발송은 아침 8시 ~ 저녁 6시 사이에만 가능합니다. (현재 시각: {kst_now.strftime('%H:%M')})")
-        else:
-            with st.spinner("전송 중..."):
-                msg_body = f"📰 <b>실시간 뉴스 모니터링 수동 전송</b> ({current_time_str})\n\n"
-                for kw in cached_keywords:
-                    news_list = cached_results.get(kw, [])
-                    msg_body += f"📂 <b>[{kw}]</b>\n"
-                    if not news_list:
-                        msg_body += "관련 기사 없음\n\n"
-                        continue
-                    for news in news_list[:display_limit]:
-                        prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
-                        urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
-                        safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
-                        msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
-                    msg_body += "\n"
+    # ==========================================
+    # 📲 텔레그램 발송 컨트롤 (뉴스 수동 전송 & 지진 단독 테스트 발송)
+    # ==========================================
+    col_t1, col_t2 = st.columns(2)
+    
+    with col_t1:
+        if st.button("📲 현재 수집된 뉴스만 텔레그램으로 수동 전송", use_container_width=True):
+            kst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+            if not (8 <= kst_now.hour <= 18):
+                st.warning(f"⏰ 텔레그램 발송은 아침 8시 ~ 저녁 6시 사이에만 가능합니다. (현재 시각: {kst_now.strftime('%H:%M')})")
+            else:
+                with st.spinner("뉴스 전송 중..."):
+                    msg_body = f"📰 <b>실시간 뉴스 모니터링 수동 전송</b> ({current_time_str})\n\n"
+                    for kw in cached_keywords:
+                        news_list = cached_results.get(kw, [])
+                        msg_body += f"📂 <b>[{kw}]</b>\n"
+                        if not news_list:
+                            msg_body += "관련 기사 없음\n\n"
+                            continue
+                        for news in news_list[:display_limit]:
+                            prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
+                            urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
+                            safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
+                            msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
+                        msg_body += "\n"
 
-                res = send_telegram_message(tele_token, tele_chat_id, msg_body)
-                if res and res.status_code == 200:
-                    st.success("✅ 텔레그램으로 뉴스가 전송되었습니다.")
-                else:
-                    st.error("❌ 전송 실패")
+                    res = send_telegram_message(tele_token, tele_chat_id, msg_body)
+                    if res and res.status_code == 200:
+                        st.success("✅ 텔레그램으로 뉴스가 전송되었습니다.")
+                    else:
+                        st.error("❌ 전송 실패")
+
+    with col_t2:
+        if st.button("🧪 [테스트] 최근 지진 텔레그램 즉시 발송", use_container_width=True):
+            if not cached_earthquake:
+                st.warning("⚠️ 발송할 지진 관측 데이터가 없습니다.")
+            else:
+                with st.spinner("최근 지진 속보 테스트 발송 중..."):
+                    latest_eq = cached_earthquake[0]
+                    tm_eqk_formatted = format_eqk_time(latest_eq.get('tmEqk', '-'))
+                    tm_fc_formatted = format_eqk_time(latest_eq.get('tmFc', '-'))
+                    img_url = latest_eq.get('img')[cite: 2]
+                    
+                    test_alert_msg = (
+                        f"🚨 <b>[기상청 국내 지진 긴급 속보 (테스트)]</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📍 <b>진앙:</b> {latest_eq.get('loc', '국내 관측')}\n"
+                        f"💥 <b>규모:</b> M{latest_eq.get('mt', '-')} (최대진도: {latest_eq.get('inT', '-')})\n"
+                        f"📏 <b>발생깊이:</b> {latest_eq.get('dep', '-')} km\n"
+                        f"⏱ <b>발생시각:</b> {tm_eqk_formatted}\n"
+                        f"📢 <b>발표시각:</b> {tm_fc_formatted}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📝 <b>상세:</b> {latest_eq.get('rem', '')}"
+                    )
+
+                    if img_url and isinstance(img_url, str) and img_url.startswith("http"):
+                        res = send_telegram_photo(tele_token, tele_chat_id, img_url, test_alert_msg)
+                    else:
+                        res = send_telegram_message(tele_token, tele_chat_id, test_alert_msg)
+
+                    if res and res.status_code == 200:
+                        st.success(f"✅ 최근 지진(M{latest_eq.get('mt')}, {latest_eq.get('loc')}) 속보가 텔레그램으로 전송되었습니다!")
+                    else:
+                        st.error("❌ 전송 실패 - 텔레그램 설정을 확인해주세요.")
