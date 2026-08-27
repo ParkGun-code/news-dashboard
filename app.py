@@ -12,7 +12,7 @@ import feedparser
 import concurrent.futures
 from streamlit_autorefresh import st_autorefresh 
 
-# SSL 경고 비활성화
+# SSL 인증서 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 웹페이지 기본 설정 ---
@@ -37,11 +37,11 @@ def save_app_state():
     state = {
         "run_search": st.session_state.get("run_search", False),
         "selected_portals_key": st.session_state.get("selected_portals_key", ["네이버", "구글", "다음"]),
-        "selected_regions_key": st.session_state.get("selected_regions_key", []),
+        "selected_regions_key": st.session_state.get("selected_regions_key", ["대전", "충남", "충북", "세종"]),
         "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진"),
         "display_limit_key": st.session_state.get("display_limit_key", 10),
         "sort_combo_key": st.session_state.get("sort_combo_key", "중요도순"),
-        "period_combo_key": st.session_state.get("period_combo_key", "일주일"),
+        "period_combo_key": st.session_state.get("period_combo_key", "오늘"),
         "refresh_combo_key": st.session_state.get("refresh_combo_key", "1시간"),
         "custom_minutes_key": st.session_state.get("custom_minutes_key", 60),
         "auto_tele_check_key": st.session_state.get("auto_tele_check_key", True)
@@ -73,11 +73,11 @@ if 'initialized' not in st.session_state:
     saved = load_app_state()
     st.session_state.run_search = saved.get("run_search", False)
     st.session_state.selected_portals_key = saved.get("selected_portals_key", ["네이버", "구글", "다음"])
-    st.session_state.selected_regions_key = saved.get("selected_regions_key", [])
-    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
+    st.session_state.selected_regions_key = saved.get("selected_regions_key", ["대전", "충남", "충북", "세종"])
+    st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진")
     st.session_state.display_limit_key = saved.get("display_limit_key", 10)
     st.session_state.sort_combo_key = saved.get("sort_combo_key", "중요도순")
-    st.session_state.period_combo_key = saved.get("period_combo_key", "일주일")
+    st.session_state.period_combo_key = saved.get("period_combo_key", "오늘")
     st.session_state.refresh_combo_key = saved.get("refresh_combo_key", "1시간")
     st.session_state.custom_minutes_key = saved.get("custom_minutes_key", 60)
     st.session_state.auto_tele_check_key = saved.get("auto_tele_check_key", True)
@@ -195,7 +195,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌐 데이터 수집 클래스 (예외 복원력 강화)
+# 🌐 데이터 수집 클래스
 # ==========================================
 class NewsScraper:
     def __init__(self, naver_client_id="", naver_client_secret=""):
@@ -205,7 +205,6 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self, days_back=7):
-        """기상청 국내 지진 통보문 조회[cite: 2]"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = (now + datetime.timedelta(days=1)).strftime("%Y%m%d")
@@ -243,7 +242,7 @@ class NewsScraper:
         except Exception:
             return st.session_state.get("cached_earthquake", [])
 
-    def get_google_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
+    def get_google_news_pool(self, keyword, start_date, end_date, limit=100, sort_method='sim'):
         clean_kw = keyword.replace('|', ' ').replace('&', ' ')
         encoded_query = urllib.parse.quote(clean_kw)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
@@ -255,26 +254,14 @@ class NewsScraper:
                 title = entry.title
                 link = entry.link
                 description = BeautifulSoup(entry.summary, "html.parser").text if hasattr(entry, 'summary') else ""
-                
-                # 날짜 파싱 오류가 있어도 기사는 살림
-                dt = datetime.datetime.now(self.kst)
-                try:
-                    dt = parsedate_to_datetime(entry.published)
-                except Exception:
-                    pass
-
-                results.append({"title": title, "link": link, "description": description, "published": dt})
+                results.append({"title": title, "link": link, "description": description})
                 if len(results) >= limit:
                     break
         except Exception:
             pass
-
-        if sort_method == 'date':
-            results.sort(key=lambda x: x['published'], reverse=True)
-
         return results
 
-    def get_naver_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
+    def get_naver_news_pool(self, keyword, start_date, end_date, limit=100, sort_method='sim'):
         if not self.naver_client_id or not self.naver_client_secret:
             return []
         clean_kw = keyword.replace('|', ' ').replace('&', ' ')
@@ -284,7 +271,6 @@ class NewsScraper:
             "X-Naver-Client-Secret": self.naver_client_secret
         }
         results = []
-
         try:
             sort_param = "sim" if sort_method == 'sim' else "date"
             params = {"query": clean_kw, "display": min(100, limit), "start": 1, "sort": sort_param}
@@ -297,10 +283,9 @@ class NewsScraper:
                     results.append({"title": title, "link": item['link'], "description": description})
         except Exception:
             pass
+        return results
 
-        return results[:limit]
-
-    def get_daum_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
+    def get_daum_news_pool(self, keyword, start_date, end_date, limit=100, sort_method='sim'):
         clean_kw = keyword.replace('|', ' ').replace('&', ' ')
         encoded_query = urllib.parse.quote(clean_kw)
         headers = {
@@ -314,18 +299,17 @@ class NewsScraper:
             response = requests.get(url, headers=headers, timeout=6)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                articles = soup.select('div.item-title a, a.tit_main, a.item-title, ul.c-list-basic li')
+                articles = soup.select('div.item-title a, a.tit_main, a.item-title, ul.c-list-basic li a')
                 for a in articles:
                     title = a.get_text(strip=True)
                     link = a.get('href')
-                    if title and link and link.startswith("http"):
+                    if title and link and link.startswith("http") and not any(r['link'] == link for r in results):
                         results.append({"title": title, "link": link, "description": ""})
                         if len(results) >= limit:
                             break
         except Exception:
             pass
-
-        return results[:limit]
+        return results
 
 def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, limit, start_date, end_date, sort_method):
     portal_methods = {
@@ -342,26 +326,23 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
         if not fetch_func:
             continue
             
-        news_pool = fetch_func(keyword, start_date, end_date, limit=100, sort_method=sort_method)
+        news_pool = fetch_func(keyword, start_date, end_date, limit=50, sort_method=sort_method)
 
         for news in news_pool:
-            matched_region = None
-            if not selected_regions:
-                matched_region = "전체" 
-            else:
+            matched_region = "전국"
+            if selected_regions:
                 for region in selected_regions:
                     if region in news['title'] or region in news['description']:
                         matched_region = region
                         break 
 
-            if matched_region and news['link'] not in seen_links:
+            if news['link'] not in seen_links:
                 news_copy = news.copy()
                 news_copy['region'] = matched_region
                 news_copy['portal'] = portal_name
                 combined_news_pool.append(news_copy)
                 seen_links.add(news['link'])
 
-    # 긴급 기사 우선 정렬
     urgent_news = [n for n in combined_news_pool if any(w in n['title'] for w in ["속보", "긴급", "단독"])]
     normal_news = [n for n in combined_news_pool if n not in urgent_news]
 
@@ -429,7 +410,7 @@ else:
 with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
-        selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], default=["네이버", "구글", "다음"], key="selected_portals_key")
+        selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], key="selected_portals_key")
     with col2:
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
         selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, key="selected_regions_key")
@@ -444,7 +425,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     with col_sort:
         sort_combo = st.selectbox("정렬 기준", ["중요도순", "최신순"], key="sort_combo_key")
     with col5:
-        period_combo = st.selectbox("검색 기간", ["일주일", "오늘", "한달", "일년", "기간 선택"], key="period_combo_key")
+        period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"], key="period_combo_key")
 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
@@ -531,7 +512,7 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 실시간 국내 지진 전송 (이미지 첨부 + 단독 실행)
+    # 🚨 [1] 실시간 국내 지진 전송
     # ----------------------------------------------------
     domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=7)
     st.session_state.cached_earthquake = domestic_eqks
@@ -559,7 +540,7 @@ if st.session_state.run_search:
                     f"📝 <b>상세:</b> {eq.get('rem', '')}"
                 )
 
-                if img_url and str(img_url).startswith("http"):
+                if img_url and isinstance(img_url, str) and img_url.startswith("http"):
                     res = send_telegram_photo(tele_token, tele_chat_id, img_url, eq_alert_msg)
                 else:
                     res = send_telegram_message(tele_token, tele_chat_id, eq_alert_msg)
@@ -568,7 +549,7 @@ if st.session_state.run_search:
                     sent_set.add(eq_id)
                     st.session_state.sent_eqk_set = sent_set
                     save_sent_eqk(sent_set)
-                    st.toast(f"⚡ 기상청 국내 지진 속보(지도 포함) 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
+                    st.toast(f"⚡ 기상청 국내 지진 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
     # 📰 [2] 뉴스 수집 및 정각 발송
@@ -599,7 +580,6 @@ if st.session_state.run_search:
 
         sort_method_val = 'sim' if sort_combo == "중요도순" else 'date'
 
-        # 검색 시작일 및 종료일 안전 보장
         if 'start_date' not in locals():
             start_date = today_kst - datetime.timedelta(days=7)
         if 'end_date' not in locals():
@@ -628,7 +608,7 @@ if st.session_state.run_search:
                     news_msg_body += "관련 기사 없음\n\n"
                     continue
                 for news in news_list[:display_limit]:
-                    prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
+                    prefix = f"[{news['region']}][{news['portal']}]"
                     urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
                     safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
                     news_msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
@@ -672,8 +652,11 @@ if st.session_state.run_search:
                         """,
                         unsafe_allow_html=True
                     )
-                    if img_url and str(img_url).startswith("http"):
-                        st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
+                    if img_url and isinstance(img_url, str) and img_url.startswith("http"):
+                        try:
+                            st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
+                        except Exception:
+                            pass
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -688,7 +671,7 @@ if st.session_state.run_search:
                 news_list = cached_results.get(kw, [])
                 with cols[j]:
                     with st.container(height=480, border=True):
-                        st.markdown(f"<div class='card-title'>{kw} 모니터링</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='card-title'>{kw} 모니터링 ({len(news_list)}건)</div>", unsafe_allow_html=True)
                         if not news_list:
                             st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간 기사 없음</div>", unsafe_allow_html=True)
                         else:
@@ -698,7 +681,7 @@ if st.session_state.run_search:
                                 link = news['link']
                                 portal = news['portal']
                                 region = news['region']
-                                prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
+                                prefix = f"[{region}][{portal}]"
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
                                 tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
                                 if is_urgent:
@@ -724,7 +707,7 @@ if st.session_state.run_search:
                         msg_body += "관련 기사 없음\n\n"
                         continue
                     for news in news_list[:display_limit]:
-                        prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
+                        prefix = f"[{news['region']}][{news['portal']}]"
                         urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
                         safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
                         msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
