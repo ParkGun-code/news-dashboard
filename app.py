@@ -222,7 +222,7 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self):
-        """기상청 지진정보 공식 가이드 규격 준수 (최근 3일 이내)[cite: 2]"""
+        """기상청 지진정보 공식 가이드 규격 준수 (최근 3일 이내)"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=3)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
@@ -261,7 +261,7 @@ class NewsScraper:
         clean_kw = keyword.replace('&', ' OR ').replace('|', ' OR ')
         before_date = end_date + datetime.timedelta(days=1)
         query = f"{clean_kw} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
-        encoded_query = urllib.parse.quote(query)
+        encoded_query = urllib.parse.quote(clean_kw)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
         feed = feedparser.parse(url)
@@ -629,7 +629,7 @@ if st.session_state.run_search:
             if eq_id not in sent_set:
                 tm_eqk_formatted = format_eqk_time(eq.get('tmEqk', '-'))
                 tm_fc_formatted = format_eqk_time(eq.get('tmFc', '-'))
-                img_url = eq.get('img')[cite: 2]
+                img_url = eq.get('img')
                 
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 국내 지진 긴급 속보]</b>\n"
@@ -750,7 +750,7 @@ if st.session_state.run_search:
                     if idx < len(cached_earthquake):
                         eq = cached_earthquake[idx]
                         tm_eqk_f = format_eqk_time(eq.get('tmEqk', '-'))
-                        img_url = eq.get('img')[cite: 2]
+                        img_url = eq.get('img')
                         
                         st.markdown(
                             f"""
@@ -846,7 +846,7 @@ if st.session_state.run_search:
                         st.error("❌ 전송 실패")
 
     with col_t2:
-        if st.button("🧪 [테스트] 최근 지진 텔레그램 즉시 발송", use_container_width=True):
+        if st.button("🧪 [테스트] 최근 지진 1건 텔레그램 즉시 발송", use_container_width=True):
             if not cached_earthquake:
                 st.warning("⚠️ 발송할 지진 관측 데이터가 없습니다.")
             else:
@@ -854,7 +854,7 @@ if st.session_state.run_search:
                     latest_eq = cached_earthquake[0]
                     tm_eqk_formatted = format_eqk_time(latest_eq.get('tmEqk', '-'))
                     tm_fc_formatted = format_eqk_time(latest_eq.get('tmFc', '-'))
-                    img_url = latest_eq.get('img')[cite: 2]
+                    img_url = latest_eq.get('img')
                     
                     test_alert_msg = (
                         f"🚨 <b>[기상청 국내 지진 긴급 속보 (테스트)]</b>\n"
