@@ -12,23 +12,24 @@ import feedparser
 import concurrent.futures
 from streamlit_autorefresh import st_autorefresh 
 
-# SSL 인증서 경고 억제
+# SSL 경고 억제
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 웹페이지 기본 설정 ---
-st.set_page_config(page_title="뉴스 & 기상청 재난 모니터링 시스템", layout="wide")
+st.set_page_config(page_title="실시간 뉴스 & 기상청 지진 모니터링", layout="wide")
 
 # ==========================================
-# 💾 상태 저장 및 복원 로직
+# 💾 상태 및 지진 알림 이력 관리 로직
 # ==========================================
 STATE_FILE = "app_state.json"
+SENT_EQK_FILE = "sent_earthquakes.json"
 
 def load_app_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             pass
     return {}
 
@@ -51,6 +52,22 @@ def save_app_state():
     except Exception:
         pass
 
+def load_sent_eqk():
+    if os.path.exists(SENT_EQK_FILE):
+        try:
+            with open(SENT_EQK_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+def save_sent_eqk(sent_set):
+    try:
+        with open(SENT_EQK_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(sent_set), f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
 # --- 세션 스토리지 초기화 ---
 if 'initialized' not in st.session_state:
     saved = load_app_state()
@@ -69,6 +86,7 @@ if 'initialized' not in st.session_state:
     st.session_state.cached_results = {}
     st.session_state.cached_keywords = []
     st.session_state.cached_earthquake = []
+    st.session_state.sent_eqk_set = load_sent_eqk()
     st.session_state.last_tele_hour = None
     st.session_state.initialized = True
 
@@ -107,11 +125,9 @@ st.markdown("""
         border-radius: 6px !important;
         font-weight: 600 !important;
         padding: 0.5rem 1rem !important;
-        transition: all 0.2s ease !important;
     }
     button[kind="primary"]:hover {
         background-color: #1d4ed8 !important; 
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
     }
 
     .news-item {
@@ -137,7 +153,6 @@ st.markdown("""
         overflow: hidden;
         text-overflow: ellipsis;
         vertical-align: middle;
-        transition: color 0.2s ease;
     }
     .news-link:hover {
         color: #2563eb;
@@ -171,16 +186,11 @@ st.markdown("""
         padding-left: 8px;
         border-left: 4px solid #ef4444;
     }
-    .eqk-item {
-        padding: 6px 0;
-        border-bottom: 1px solid #fee2e2;
-        font-size: 13px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌐 데이터 수집 클래스 (뉴스 + 기상청 지진)
+# 🌐 데이터 수집 클래스
 # ==========================================
 class NewsScraper:
     def __init__(self, naver_client_id="", naver_client_secret=""):
@@ -189,14 +199,14 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
-    def fetch_kma_earthquakes(self, days_back=3):
-        """기상청 지진 통보문 실시간 조회"""
+    def fetch_kma_domestic_earthquakes(self, days_back=3):
+        """기상청 국내 지진 통보문만 엄격 필터링 조회"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
         url = (
             f"http://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
-            f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=10&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
+            f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=20&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
         )
         try:
             res = requests.get(url, timeout=10, verify=False)
@@ -204,7 +214,20 @@ class NewsScraper:
             items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
             if isinstance(items, dict):
                 items = [items]
-            return items
+
+            foreign_keywords = ["국외", "일본", "대만", "중국", "러시아", "필리핀", "인도네시아", "칠레", "미국", "멕시코", "터키", "튀르키예", "바누아투", "피지", "통가"]
+            domestic_items = []
+
+            for eq in items:
+                loc = str(eq.get("loc", ""))
+                rem = str(eq.get("rem", ""))
+                
+                # 해외 키워드 배제
+                if any(fk in loc for fk in foreign_keywords) or any(fk in rem for fk in ["국외지진", "국외 지진"]):
+                    continue
+                domestic_items.append(eq)
+
+            return domestic_items
         except Exception:
             return []
 
@@ -387,8 +410,8 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     return (urgent_news + mixed_normal)[:limit]
 
 def send_telegram_message(token, chat_id, text):
-    """텔레그램 API를 사용하여 메시지를 전송합니다."""
-    if not token:
+    """텔레그램 메시지 전송"""
+    if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -397,35 +420,38 @@ def send_telegram_message(token, chat_id, text):
         "parse_mode": "HTML",
         "disable_web_page_preview": True 
     }
-    response = requests.post(url, json=payload, timeout=10)
-    return response
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        return response
+    except Exception:
+        return None
 
 # ==========================================
 # 메인 헤더
 # ==========================================
-st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 지진 모니터링</div>", unsafe_allow_html=True)
+st.markdown("<div class='main-header'>실시간 사건·사고 & 국내 지진 긴급 감시</div>", unsafe_allow_html=True)
 
 if st.session_state.run_search:
-    st.markdown("<div class='sub-header'>🟢 <b>자동 수집 작동 중:</b> 인터넷 창이 새로고침 되더라도 꺼지지 않고 자동으로 이어서 수집합니다.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 즉시 텔레그램 속보가 단독 전송됩니다.</div>", unsafe_allow_html=True)
 else:
-    st.markdown("<div class='sub-header'>※ 자동 텔레그램 발송 기능을 이용하려면 이 웹 브라우저 창을 닫지 말고 계속 켜두세요.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널
 # ==========================================
-with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 닫으세요)", expanded=True):
+with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
         selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], key="selected_portals_key")
     with col2:
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
-        selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, key="selected_regions_key")
+        selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역)", all_regions, key="selected_regions_key")
 
     st.write("") 
 
     col3, col4, col_sort, col5 = st.columns([3, 1, 1, 1.5])
     with col3:
-        keywords_str = st.text_input("검색어 (쉼표로 구분하여 여러 개 입력)", key="keywords_str_key")
+        keywords_str = st.text_input("검색어 (쉼표 구분)", key="keywords_str_key")
     with col4:
         display_limit = st.number_input("출력 기사 수", min_value=1, max_value=100, key="display_limit_key")
     with col_sort:
@@ -439,7 +465,7 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
         if period_combo == "기간 선택":
-            date_range = st.date_input("날짜 지정 (시작일 - 종료일)", 
+            date_range = st.date_input("날짜 지정", 
                                        value=(today_kst - datetime.timedelta(days=7), today_kst),
                                        max_value=today_kst)
             if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -459,10 +485,10 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             elif period_combo == "일년":
                 start_date = end_date - datetime.timedelta(days=365)
 
-            st.text_input("적용된 기간 (자동 계산됨)", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
+            st.text_input("적용 기간", f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}", disabled=True)
 
     with col7:
-        refresh_combo = st.selectbox("웹 화면 자동 갱신 주기", ["사용 안함", "10분", "30분", "1시간", "2시간", "3시간", "기타"], key="refresh_combo_key")
+        refresh_combo = st.selectbox("뉴스 화면 갱신 주기", ["사용 안함", "10분", "30분", "1시간", "2시간", "3시간", "기타"], key="refresh_combo_key")
     with col8:
         if refresh_combo == "기타":
             refresh_minutes = st.number_input("갱신(분)", min_value=1, key="custom_minutes_key")
@@ -483,23 +509,22 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
 
     tele_chat_id = "-1003880927818"
 
-    st.markdown("#### 📱 텔레그램 자동 연동 설정")
-    auto_tele_check = st.checkbox("⏰ 웹페이지 켜짐 연동 발송: 아침 8시 ~ 저녁 6시 사이 매 정각(1시간 단위)마다 텔레그램 발송 켜기", key="auto_tele_check_key")
-    if auto_tele_check:
-        st.info("💡 이 브라우저 창을 켜두시면 텔레그램으로 정각마다 뉴스와 지진 정보가 자동 전송됩니다.")
+    st.markdown("#### 📱 텔레그램 연동 상태")
+    auto_tele_check = st.checkbox("⏰ 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
+    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 상관없이 30초 주기로 자동 감지되어 발생 즉시 텔레그램으로 단독 전송됩니다.")
 
     st.write("")
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        if st.button("🚀 모니터링 실행 (자동 저장)", type="primary", use_container_width=True):
+        if st.button("🚀 감시 및 모니터링 실행", type="primary", use_container_width=True):
             st.session_state.run_search = True
             st.session_state.last_fetch_time = None
             save_app_state()
             st.rerun()
 
     with col_btn2:
-        if st.button("🛑 모니터링 중지 및 초기화", use_container_width=True):
+        if st.button("🛑 감시 중지 및 초기화", use_container_width=True):
             st.session_state.run_search = False
             st.session_state.cached_results = {}
             st.session_state.cached_earthquake = []
@@ -508,16 +533,53 @@ with st.expander("⚙️ 검색 조건 설정 (여기를 클릭해서 열거나 
             st.rerun()
 
 # ==========================================
-# 자동 갱신 및 렌더링 영역
+# 자동 감시 루프 & 렌더링
 # ==========================================
 if st.session_state.run_search:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
 
-    if refresh_minutes > 0 or auto_tele_check:
-        st_autorefresh(interval=30 * 1000, key="news_autorefresh")
+    # 30초마다 갱신하여 지진 발생 여부를 실시간 폴링
+    st_autorefresh(interval=30 * 1000, key="eqk_realtime_poller")
 
-    do_crawl = False
+    scraper = NewsScraper(
+        naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
+        naver_client_secret="3Yx_9guJfU"
+    )
+
+    # ----------------------------------------------------
+    # 🚨 [1] 실시간 국내 지진 단독 즉시 발송 로직 (30초마다 체크)
+    # ----------------------------------------------------
+    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
+    st.session_state.cached_earthquake = domestic_eqks
+
+    if tele_token and tele_chat_id and domestic_eqks:
+        for eq in domestic_eqks:
+            # 고유 지진 ID 식별 (발생시각_진앙_규모)
+            eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
+            
+            if eq_id not in st.session_state.sent_eqk_set:
+                # 신규 발생한 국내 지진 즉시 단독 텔레그램 전송
+                eq_alert_msg = (
+                    f"🚨 <b>[기상청 지진 긴급 속보]</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📍 <b>진앙:</b> {eq.get('loc', '국내 관측')}\n"
+                    f"💥 <b>규모:</b> M{eq.get('mt', '-')} (최대진도: {eq.get('inT', '-')})\n"
+                    f"📏 <b>발생깊이:</b> {eq.get('dep', '-')} km\n"
+                    f"⏱ <b>발생시각:</b> {eq.get('tmEqk', '-')}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📝 <b>상세:</b> {eq.get('rem', '')}"
+                )
+                res = send_telegram_message(tele_token, tele_chat_id, eq_alert_msg)
+                if res and res.status_code == 200:
+                    st.session_state.sent_eqk_set.add(eq_id)
+                    save_sent_eqk(st.session_state.sent_eqk_set)
+                    st.toast(f"⚡ 신규 국내 지진 긴급 속보를 텔레그램으로 즉시 발송했습니다! (M{eq.get('mt')})", icon="🚨")
+
+    # ----------------------------------------------------
+    # 📰 [2] 뉴스 기사 정기 수집 및 정각 발송 로직
+    # ----------------------------------------------------
+    do_news_crawl = False
     auto_tele_trigger = False
     curr_hour = now_time.hour
 
@@ -525,27 +587,17 @@ if st.session_state.run_search:
         if 8 <= curr_hour <= 18:
             if st.session_state.last_tele_hour != curr_hour:
                 auto_tele_trigger = True
-                do_crawl = True 
+                do_news_crawl = True 
 
     if st.session_state.last_fetch_time is None:
-        do_crawl = True
+        do_news_crawl = True
     elif not auto_tele_trigger and refresh_minutes > 0:
         diff_seconds = (now_time - st.session_state.last_fetch_time).total_seconds()
         if diff_seconds >= (refresh_minutes * 60 - 5):
-            do_crawl = True
+            do_news_crawl = True
 
-    scraper = NewsScraper(
-        naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
-        naver_client_secret="3Yx_9guJfU"
-    )
-
-    if do_crawl:
-        if not selected_portals:
-            st.error("최소 하나 이상의 포털을 선택해주세요.")
-            st.stop()
-
-        if not keywords_str.strip():
-            st.error("검색어를 입력해주세요.")
+    if do_news_crawl:
+        if not selected_portals or not keywords_str.strip():
             st.stop()
 
         raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
@@ -555,85 +607,55 @@ if st.session_state.run_search:
 
         sort_method_val = 'sim' if sort_combo == "중요도순" else 'date'
 
-        with st.spinner(f"기상청 지진 데이터 및 뉴스 기사를 수집하고 있습니다..."):
-            # 1. 기상청 지진 데이터 수집
-            eqk_items = scraper.fetch_kma_earthquakes(days_back=3)
-            st.session_state.cached_earthquake = eqk_items
-
-            # 2. 뉴스 포털 기사 병렬 수집
-            results_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
-                for future in concurrent.futures.as_completed(future_to_kw):
-                    kw = future_to_kw[future]
-                    try:
-                        results_dict[kw] = future.result()
-                    except Exception as e:
-                        st.error(f"{kw} 검색 중 오류 발생: {e}")
+        results_dict = {}
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
+            for future in concurrent.futures.as_completed(future_to_kw):
+                kw = future_to_kw[future]
+                try:
+                    results_dict[kw] = future.result()
+                except Exception:
+                    pass
 
         st.session_state.cached_results = results_dict
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        # 텔레그램 정각 알림 트리거 발동 시 전송
+        # 정각 정기 뉴스 전송
         if auto_tele_trigger:
-            msg_body = f"📢 <b>[정각 알림] 재난 & 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
-            
-            # 지진 정보 메시지 조립
-            if eqk_items:
-                latest_eq = eqk_items[0]
-                msg_body += (
-                    f"💥 <b>[기상청 최근 지진 관측]</b>\n"
-                    f"• 진앙: {latest_eq.get('loc', '-')}\n"
-                    f"• 규모: M{latest_eq.get('mt', '-')} ({latest_eq.get('inT', '-')})\n"
-                    f"• 시각: {latest_eq.get('tmEqk', '-')}\n\n"
-                )
-
-            # 키워드별 뉴스 조립
+            news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
                 news_list = results_dict.get(kw, [])
-                msg_body += f"📂 <b>[{kw}]</b>\n"
-
+                news_msg_body += f"📂 <b>[{kw}]</b>\n"
                 if not news_list:
-                    msg_body += "관련 기사 없음\n\n"
+                    news_msg_body += "관련 기사 없음\n\n"
                     continue
-
                 for news in news_list[:display_limit]:
                     prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
                     urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
                     safe_title = news['title'].replace('<', '&lt;').replace('>', '&gt;')
-                    msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
-                msg_body += "\n"
+                    news_msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
+                news_msg_body += "\n"
 
-            try:
-                send_telegram_message(tele_token, tele_chat_id, msg_body)
-                st.session_state.last_tele_hour = curr_hour 
-                st.toast("⏰ 정각 자동 텔레그램 메시지가 성공적으로 발송되었습니다!", icon="✅")
-            except Exception as e:
-                st.error(f"❌ 텔레그램 자동 전송 중 오류 발생: {e}")
-                st.session_state.last_tele_hour = curr_hour
+            send_telegram_message(tele_token, tele_chat_id, news_msg_body)
+            st.session_state.last_tele_hour = curr_hour
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
+    # ----------------------------------------------------
+    # 🖥️ [3] 웹 화면 렌더링
+    # ----------------------------------------------------
     cached_keywords = st.session_state.get('cached_keywords', [])
     cached_results = st.session_state.get('cached_results', {})
     cached_earthquake = st.session_state.get('cached_earthquake', [])
     last_fetch_time = st.session_state.get('last_fetch_time')
-
     current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
 
-    if refresh_minutes > 0:
-        st.caption(f"⏱ 안내: 설정된 갱신 주기로 웹 화면 데이터를 자동 수집합니다. (최근 수집 시간: {current_time_str})")
-    else:
-        st.caption(f"✅ 최근 수집 완료 시간: {current_time_str}")
+    st.caption(f"⚡ 지진 실시간 감시: 30초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
 
-    # ==========================================
-    # 🔴 [기상청 지진 현황 배너/카드 위젯]
-    # ==========================================
+    # 기상청 국내 지진 현황 배너
     with st.container(border=True):
-        st.markdown("<div class='eqk-card-title'>🌊 기상청 실시간 지진 관측 현황 (최근 3일)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 3일 국내 관측 건)</div>", unsafe_allow_html=True)
         if not cached_earthquake:
-            st.success("최근 3일간 국내 관측된 주요 지진이 없습니다.")
+            st.success("최근 3일간 관측된 국내 지진이 없습니다.")
         else:
             eq_cols = st.columns(min(len(cached_earthquake), 3))
             for idx, eq in enumerate(cached_earthquake[:3]):
@@ -642,7 +664,7 @@ if st.session_state.run_search:
                         f"""
                         <div style='background-color:#fff1f2; padding:12px; border-radius:8px; border:1px solid #fecdd3;'>
                             <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
-                            <span style='font-size:13px; color:#475569;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
+                            <span style='font-size:13px; color:#475569;'>• 규모: <b>M{eq.get('mt', '-')}</b> (진도: {eq.get('inT', '-')})</span><br>
                             <span style='font-size:13px; color:#475569;'>• 깊이: {eq.get('dep', '-')} km</span><br>
                             <span style='font-size:12px; color:#64748b;'>• 시각: {eq.get('tmEqk', '-')}</span>
                         </div>
@@ -652,25 +674,20 @@ if st.session_state.run_search:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ==========================================
-    # 📰 [뉴스 모니터링 카드 렌더링]
-    # ==========================================
+    # 뉴스 카드 그리드
     num_kw = len(cached_keywords)
     columns_per_row = 3
-
     for i in range(0, num_kw, columns_per_row):
         cols = st.columns(columns_per_row)
         for j in range(columns_per_row):
             if i + j < num_kw:
                 kw = cached_keywords[i + j]
                 news_list = cached_results.get(kw, [])
-
                 with cols[j]:
                     with st.container(height=480, border=True):
-                        st.markdown(f"<div class='card-title'>{kw} 모니터링 현황</div>", unsafe_allow_html=True)
-
+                        st.markdown(f"<div class='card-title'>{kw} 모니터링</div>", unsafe_allow_html=True)
                         if not news_list:
-                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간에 수집된 데이터가 없습니다.</div>", unsafe_allow_html=True)
+                            st.markdown("<div style='color:#94a3b8; font-size:14px; margin-top:20px;'>해당 기간 기사 없음</div>", unsafe_allow_html=True)
                         else:
                             html_content = ""
                             for news in news_list:
@@ -678,50 +695,31 @@ if st.session_state.run_search:
                                 link = news['link']
                                 portal = news['portal']
                                 region = news['region']
-
                                 prefix = f"[{region}][{portal}]" if selected_regions else f"[{portal}]"
                                 is_urgent = any(w in title for w in ["속보", "긴급", "단독"])
                                 tooltip_text = f"{prefix} {title}".replace("'", "&apos;").replace('"', '&quot;')
-
                                 if is_urgent:
                                     html_content += f"<div class='news-item'><span class='urgent-tag'>[긴급]</span><span class='news-meta'>{prefix}</span><a href='{link}' class='news-link urgent-link' target='_blank' title='{tooltip_text}'>{title}</a></div>"
                                 else:
                                     html_content += f"<div class='news-item'><span class='news-meta'>{prefix}</span><a href='{link}' class='news-link' target='_blank' title='{tooltip_text}'>{title}</a></div>"
-
                             st.markdown(html_content, unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ==========================================
-    # 📲 텔레그램 수동 발송 버튼
-    # ==========================================
-    if st.button("📲 현재 화면의 지진 & 뉴스 정보를 텔레그램으로 수동 전송", use_container_width=True):
+    # 수동 전송 버튼
+    if st.button("📲 현재 수집된 뉴스만 텔레그램으로 수동 전송", use_container_width=True):
         kst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
         if not (8 <= kst_now.hour <= 18):
             st.warning(f"⏰ 텔레그램 발송은 아침 8시 ~ 저녁 6시 사이에만 가능합니다. (현재 시각: {kst_now.strftime('%H:%M')})")
-        elif not tele_token or not tele_chat_id:
-            st.warning("⚠️ 텔레그램 토큰 정보가 등록되지 않았습니다.")
         else:
-            with st.spinner("텔레그램으로 전송 중입니다..."):
-                msg_body = f"📢 <b>실시간 재난 & 뉴스 수동 전송</b> ({current_time_str})\n\n"
-
-                if cached_earthquake:
-                    latest_eq = cached_earthquake[0]
-                    msg_body += (
-                        f"💥 <b>[기상청 최근 지진 관측]</b>\n"
-                        f"• 진앙: {latest_eq.get('loc', '-')}\n"
-                        f"• 규모: M{latest_eq.get('mt', '-')} ({latest_eq.get('inT', '-')})\n"
-                        f"• 시각: {latest_eq.get('tmEqk', '-')}\n\n"
-                    )
-
+            with st.spinner("전송 중..."):
+                msg_body = f"📰 <b>실시간 뉴스 모니터링 수동 전송</b> ({current_time_str})\n\n"
                 for kw in cached_keywords:
                     news_list = cached_results.get(kw, [])
                     msg_body += f"📂 <b>[{kw}]</b>\n"
-
                     if not news_list:
                         msg_body += "관련 기사 없음\n\n"
                         continue
-
                     for news in news_list[:display_limit]:
                         prefix = f"[{news['region']}][{news['portal']}]" if selected_regions else f"[{news['portal']}]"
                         urgent = "🚨" if any(w in news['title'] for w in ["속보", "긴급", "단독"]) else "•"
@@ -729,11 +727,8 @@ if st.session_state.run_search:
                         msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
                     msg_body += "\n"
 
-                try:
-                    res = send_telegram_message(tele_token, tele_chat_id, msg_body)
-                    if res and res.status_code == 200:
-                        st.success("✅ 텔레그램 채팅방으로 지진 및 뉴스 데이터가 성공적으로 전송되었습니다!")
-                    else:
-                        st.error("❌ 전송 실패 - 토큰과 채팅방 ID를 확인해주세요.")
-                except Exception as e:
-                    st.error(f"❌ 텔레그램 전송 중 오류가 발생했습니다: {e}")
+                res = send_telegram_message(tele_token, tele_chat_id, msg_body)
+                if res and res.status_code == 200:
+                    st.success("✅ 텔레그램으로 뉴스가 전송되었습니다.")
+                else:
+                    st.error("❌ 전송 실패")
