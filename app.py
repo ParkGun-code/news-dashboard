@@ -12,14 +12,14 @@ import feedparser
 import concurrent.futures
 from streamlit_autorefresh import st_autorefresh 
 
-# SSL 경고 억제
+# SSL 인증서 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 웹페이지 기본 설정 ---
-st.set_page_config(page_title="실시간 뉴스 & 기상청 지진 모니터링", layout="wide")
+st.set_page_config(page_title="실시간 뉴스 & 기상청 국내 지진 모니터링", layout="wide")
 
 # ==========================================
-# 💾 상태 및 지진 알림 이력 관리 로직
+# 💾 상태 및 지진 알림 이력 관리
 # ==========================================
 STATE_FILE = "app_state.json"
 SENT_EQK_FILE = "sent_earthquakes.json"
@@ -68,7 +68,7 @@ def save_sent_eqk(sent_set):
     except Exception:
         pass
 
-# --- 세션 스토리지 초기화 (키 미존재 시 자동 복구 포함) ---
+# --- 세션 스토리지 초기화 ---
 if 'initialized' not in st.session_state:
     saved = load_app_state()
     st.session_state.run_search = saved.get("run_search", False)
@@ -90,7 +90,6 @@ if 'initialized' not in st.session_state:
     st.session_state.last_tele_hour = None
     st.session_state.initialized = True
 
-# 기존 세션 복구 방어 코드 (AttributeError 방지)
 if 'sent_eqk_set' not in st.session_state:
     st.session_state.sent_eqk_set = load_sent_eqk()
 if 'cached_earthquake' not in st.session_state:
@@ -205,14 +204,14 @@ class NewsScraper:
         self.kst = datetime.timezone(datetime.timedelta(hours=9))
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
-    def fetch_kma_domestic_earthquakes(self, days_back=3):
-        """기상청 국내 지진 통보문만 엄격 필터링 조회"""
+    def fetch_kma_domestic_earthquakes(self, days_back=7):
+        """기상청 국내 지진 통보문 정밀 조회"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = now.strftime("%Y%m%d")
         url = (
             f"http://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
-            f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=20&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
+            f"?serviceKey={self.kma_key}&dataType=JSON&numOfRows=50&pageNo=1&fromTmFc={from_tm}&toTmFc={to_tm}"
         )
         try:
             res = requests.get(url, timeout=10, verify=False)
@@ -221,18 +220,24 @@ class NewsScraper:
             if isinstance(items, dict):
                 items = [items]
 
-            foreign_keywords = ["국외", "일본", "대만", "중국", "러시아", "필리핀", "인도네시아", "칠레", "미국", "멕시코", "터키", "튀르키예", "바누아투", "피지", "통가"]
+            foreign_keywords = ["일본", "대만", "중국", "러시아", "필리핀", "인도네시아", "칠레", "미국", "멕시코", "튀르키예", "바누아투", "피지", "통가", "사할린", "쿠릴"]
+            domestic_regions = ["서울", "경기", "인천", "강원", "충북", "충남", "대전", "세종", "전북", "전남", "광주", "경북", "경남", "대구", "울산", "부산", "제주", "해역", "동해", "서해", "남해"]
+            
             domestic_items = []
-
             for eq in items:
                 loc = str(eq.get("loc", ""))
                 rem = str(eq.get("rem", ""))
                 
-                # 해외 키워드 배제
-                if any(fk in loc for fk in foreign_keywords) or any(fk in rem for fk in ["국외지진", "국외 지진"]):
+                # 명확한 국외 지진 키워드 배제
+                if any(fk in loc for fk in foreign_keywords):
                     continue
-                domestic_items.append(eq)
+                
+                # 국내 관측 지진 식별
+                is_domestic = any(dr in loc for dr in domestic_regions) or ("국내" in loc) or ("국내" in rem)
+                if is_domestic:
+                    domestic_items.append(eq)
 
+            domestic_items.sort(key=lambda x: str(x.get("tmEqk", "")), reverse=True)
             return domestic_items
         except Exception:
             return []
@@ -435,10 +440,10 @@ def send_telegram_message(token, chat_id, text):
 # ==========================================
 # 메인 헤더
 # ==========================================
-st.markdown("<div class='main-header'>실시간 사건·사고 & 국내 지진 긴급 감시</div>", unsafe_allow_html=True)
+st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국내 지진 모니터링</div>", unsafe_allow_html=True)
 
 if st.session_state.run_search:
-    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 즉시 텔레그램 속보가 단독 전송됩니다.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 텔레그램 속보가 단독 즉시 전송됩니다.</div>", unsafe_allow_html=True)
 else:
     st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
@@ -517,7 +522,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 
     st.markdown("#### 📱 텔레그램 연동 상태")
     auto_tele_check = st.checkbox("⏰ 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 상관없이 30초 주기로 자동 감지되어 발생 즉시 텔레그램으로 단독 전송됩니다.")
+    st.caption("※ **기상청 국내 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 발생 즉시 텔레그램으로 단독 전송됩니다.")
 
     st.write("")
 
@@ -545,7 +550,7 @@ if st.session_state.run_search:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     now_time = datetime.datetime.now(kst)
 
-    # 30초마다 갱신하여 지진 발생 여부를 실시간 폴링
+    # 30초 주기로 백그라운드 자동 갱신
     st_autorefresh(interval=30 * 1000, key="eqk_realtime_poller")
 
     scraper = NewsScraper(
@@ -554,20 +559,18 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 실시간 국내 지진 단독 즉시 발송 로직 (30초마다 체크)
+    # 🚨 [1] 실시간 국내 지진 단독 즉시 발송 (30초마다 체크)
     # ----------------------------------------------------
-    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=3)
+    domestic_eqks = scraper.fetch_kma_domestic_earthquakes(days_back=7)
     st.session_state.cached_earthquake = domestic_eqks
 
     sent_set = st.session_state.get('sent_eqk_set', set())
 
     if tele_token and tele_chat_id and domestic_eqks:
         for eq in domestic_eqks:
-            # 고유 지진 ID 식별 (발생시각_진앙_규모)
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
             
             if eq_id not in sent_set:
-                # 신규 발생한 국내 지진 즉시 단독 텔레그램 전송
                 eq_alert_msg = (
                     f"🚨 <b>[기상청 지진 긴급 속보]</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -583,10 +586,10 @@ if st.session_state.run_search:
                     sent_set.add(eq_id)
                     st.session_state.sent_eqk_set = sent_set
                     save_sent_eqk(sent_set)
-                    st.toast(f"⚡ 신규 국내 지진 긴급 속보를 텔레그램으로 즉시 발송했습니다! (M{eq.get('mt')})", icon="🚨")
+                    st.toast(f"⚡ 신규 국내 지진 긴급 속보 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 기사 정기 수집 및 정각 발송 로직
+    # 📰 [2] 뉴스 기사 정기 수집 및 정각 발송
     # ----------------------------------------------------
     do_news_crawl = False
     auto_tele_trigger = False
@@ -630,7 +633,6 @@ if st.session_state.run_search:
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        # 정각 정기 뉴스 전송
         if auto_tele_trigger:
             news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
@@ -650,7 +652,7 @@ if st.session_state.run_search:
             st.session_state.last_tele_hour = curr_hour
 
     # ----------------------------------------------------
-    # 🖥️ [3] 웹 화면 렌더링
+    # 🖥️ [3] 대시보드 화면 렌더링
     # ----------------------------------------------------
     cached_keywords = st.session_state.get('cached_keywords', [])
     cached_results = st.session_state.get('cached_results', {})
@@ -662,9 +664,9 @@ if st.session_state.run_search:
 
     # 기상청 국내 지진 현황 배너
     with st.container(border=True):
-        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 3일 국내 관측 건)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='eqk-card-title'>🚨 기상청 국내 지진 관측 현황 (최근 7일 국내 관측 건)</div>", unsafe_allow_html=True)
         if not cached_earthquake:
-            st.success("최근 3일간 관측된 국내 지진이 없습니다.")
+            st.info("최근 7일간 관측된 국내 지진이 없습니다.")
         else:
             eq_cols = st.columns(min(len(cached_earthquake), 3))
             for idx, eq in enumerate(cached_earthquake[:3]):
@@ -673,7 +675,7 @@ if st.session_state.run_search:
                         f"""
                         <div style='background-color:#fff1f2; padding:12px; border-radius:8px; border:1px solid #fecdd3;'>
                             <b style='color:#b91c1c; font-size:15px;'>📍 {eq.get('loc', '국내')}</b><br>
-                            <span style='font-size:13px; color:#475569;'>• 규모: <b>M{eq.get('mt', '-')}</b> (진도: {eq.get('inT', '-')})</span><br>
+                            <span style='font-size:13px; color:#475569;'>• 규모: <b>M{eq.get('mt', '-')}</b> (최대진도: {eq.get('inT', '-')})</span><br>
                             <span style='font-size:13px; color:#475569;'>• 깊이: {eq.get('dep', '-')} km</span><br>
                             <span style='font-size:12px; color:#64748b;'>• 시각: {eq.get('tmEqk', '-')}</span>
                         </div>
