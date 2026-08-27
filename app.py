@@ -12,7 +12,7 @@ import feedparser
 import concurrent.futures
 from streamlit_autorefresh import st_autorefresh 
 
-# SSL 인증서 경고 비활성화
+# SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 웹페이지 기본 설정 ---
@@ -41,7 +41,7 @@ def save_app_state():
         "keywords_str_key": st.session_state.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 건설 사고, 지반 침하, 화재, 지진"),
         "display_limit_key": st.session_state.get("display_limit_key", 10),
         "sort_combo_key": st.session_state.get("sort_combo_key", "중요도순"),
-        "period_combo_key": st.session_state.get("period_combo_key", "오늘"),
+        "period_combo_key": st.session_state.get("period_combo_key", "일주일"),
         "refresh_combo_key": st.session_state.get("refresh_combo_key", "1시간"),
         "custom_minutes_key": st.session_state.get("custom_minutes_key", 60),
         "auto_tele_check_key": st.session_state.get("auto_tele_check_key", True)
@@ -77,7 +77,7 @@ if 'initialized' not in st.session_state:
     st.session_state.keywords_str_key = saved.get("keywords_str_key", "국토교통부, 대전지방국토관리청, 사건, 사고, 화재, 지진")
     st.session_state.display_limit_key = saved.get("display_limit_key", 10)
     st.session_state.sort_combo_key = saved.get("sort_combo_key", "중요도순")
-    st.session_state.period_combo_key = saved.get("period_combo_key", "오늘")
+    st.session_state.period_combo_key = saved.get("period_combo_key", "일주일")
     st.session_state.refresh_combo_key = saved.get("refresh_combo_key", "1시간")
     st.session_state.custom_minutes_key = saved.get("custom_minutes_key", 60)
     st.session_state.auto_tele_check_key = saved.get("auto_tele_check_key", True)
@@ -136,7 +136,7 @@ st.markdown("""
     }
 
     .news-item {
-        padding: 4px 0; 
+        padding: 6px 0; 
         border-bottom: 1px dashed #f1f5f9;
     }
     .news-item:last-child {
@@ -195,7 +195,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌐 데이터 수집 클래스
+# 🌐 데이터 수집 클래스 (예외 복원력 강화)
 # ==========================================
 class NewsScraper:
     def __init__(self, naver_client_id="", naver_client_secret=""):
@@ -205,7 +205,7 @@ class NewsScraper:
         self.kma_key = "puRzQKI109F0LCwpZkpBdACQeAMzrJduCAC1iqHFbxHoxKkyrgNW3py20KEDRXSFZ6Qq9kYDBjeXvzLekT%2FPEg%3D%3D"
 
     def fetch_kma_domestic_earthquakes(self, days_back=7):
-        """기상청 지진정보 조회서비스(getEqkMsg) 기반 국내 지진 선별[cite: 2]"""
+        """기상청 국내 지진 통보문 조회[cite: 2]"""
         now = datetime.datetime.now(self.kst)
         from_tm = (now - datetime.timedelta(days=days_back)).strftime("%Y%m%d")
         to_tm = (now + datetime.timedelta(days=1)).strftime("%Y%m%d")
@@ -217,7 +217,6 @@ class NewsScraper:
         try:
             res = requests.get(url, timeout=10, verify=False)
             data = res.json()
-            
             items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
             if isinstance(items, dict):
                 items = [items]
@@ -245,29 +244,30 @@ class NewsScraper:
             return st.session_state.get("cached_earthquake", [])
 
     def get_google_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
-        clean_kw = keyword.replace('|', ' OR ').replace('&', ' OR ')
-        before_date = end_date + datetime.timedelta(days=1)
-        query = f"{clean_kw} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
-        encoded_query = urllib.parse.quote(query)
+        clean_kw = keyword.replace('|', ' ').replace('&', ' ')
+        encoded_query = urllib.parse.quote(clean_kw)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
-        feed = feedparser.parse(url)
         results = []
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                title = entry.title
+                link = entry.link
+                description = BeautifulSoup(entry.summary, "html.parser").text if hasattr(entry, 'summary') else ""
+                
+                # 날짜 파싱 오류가 있어도 기사는 살림
+                dt = datetime.datetime.now(self.kst)
+                try:
+                    dt = parsedate_to_datetime(entry.published)
+                except Exception:
+                    pass
 
-        for entry in feed.entries:
-            dt = datetime.datetime.min.replace(tzinfo=self.kst)
-            try:
-                dt = parsedate_to_datetime(entry.published)
-                dt_date = dt.astimezone(self.kst).date()
-                if not (start_date <= dt_date <= end_date):
-                    continue
-            except Exception:
-                pass
-
-            title = entry.title
-            description = BeautifulSoup(entry.summary, "html.parser").text if hasattr(entry, 'summary') else ""
-            results.append({"title": title, "link": entry.link, "description": description, "published": dt})
-            if len(results) >= limit: break
+                results.append({"title": title, "link": link, "description": description, "published": dt})
+                if len(results) >= limit:
+                    break
+        except Exception:
+            pass
 
         if sort_method == 'date':
             results.sort(key=lambda x: x['published'], reverse=True)
@@ -285,77 +285,46 @@ class NewsScraper:
         }
         results = []
 
-        for start in range(1, 1001, 100):
-            display = min(100, 1001 - start)
+        try:
             sort_param = "sim" if sort_method == 'sim' else "date"
-            params = {"query": clean_kw, "display": display, "start": start, "sort": sort_param}
-            try:
-                response = requests.get(url, headers=headers, params=params)
-                response.raise_for_status()
+            params = {"query": clean_kw, "display": min(100, limit), "start": 1, "sort": sort_param}
+            response = requests.get(url, headers=headers, params=params, timeout=8)
+            if response.status_code == 200:
                 items = response.json().get('items', [])
-                if not items: break
-
-                stop_fetching = False
                 for item in items:
-                    try:
-                        dt = parsedate_to_datetime(item['pubDate'])
-                        dt_date = dt.astimezone(self.kst).date()
-
-                        if sort_method == 'date':
-                            if dt_date > end_date:
-                                continue
-                            elif dt_date < start_date:
-                                stop_fetching = True 
-                                continue
-                        else:
-                            if not (start_date <= dt_date <= end_date):
-                                continue
-                    except Exception:
-                        pass
-
                     title = item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"').replace('&apos;', "'")
                     description = item['description'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"').replace('&apos;', "'")
                     results.append({"title": title, "link": item['link'], "description": description})
+        except Exception:
+            pass
 
-                if stop_fetching or len(results) >= limit: break
-            except Exception:
-                break
         return results[:limit]
 
     def get_daum_news_pool(self, keyword, start_date, end_date, limit=200, sort_method='sim'):
         clean_kw = keyword.replace('|', ' ').replace('&', ' ')
         encoded_query = urllib.parse.quote(clean_kw)
-        sd = start_date.strftime("%Y%m%d") + "000000"
-        ed = end_date.strftime("%Y%m%d") + "235959"
-
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         results = []
-        max_pages = math.ceil(limit / 10)
+        sort_param = "accuracy" if sort_method == 'sim' else "recency"
+        url = f"https://search.daum.net/search?w=news&q={encoded_query}&sort={sort_param}&p=1"
 
-        for page in range(1, max_pages + 1):
-            sort_param = "accuracy" if sort_method == 'sim' else "recency"
-            url = f"https://search.daum.net/search?w=news&q={encoded_query}&sort={sort_param}&DA=STC&period=u&sd={sd}&ed={ed}&p={page}"
-            try:
-                response = requests.get(url, headers=headers, timeout=5)
+        try:
+            response = requests.get(url, headers=headers, timeout=6)
+            if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
+                articles = soup.select('div.item-title a, a.tit_main, a.item-title, ul.c-list-basic li')
+                for a in articles:
+                    title = a.get_text(strip=True)
+                    link = a.get('href')
+                    if title and link and link.startswith("http"):
+                        results.append({"title": title, "link": link, "description": ""})
+                        if len(results) >= limit:
+                            break
+        except Exception:
+            pass
 
-                articles = soup.select('.c-item-content') or soup.select('ul.c-list-basic > li') or soup.select('.wrap_cont')
-                if not articles: break
-
-                for article in articles:
-                    title_elem = article.select_one('.item-title a') or article.select_one('a.tit_main') or article.select_one('.tit-g a') or article.select_one('strong > a')
-                    desc_elem = article.select_one('.conts-desc') or article.select_one('.desc') or article.select_one('p.f_eb')
-
-                    if title_elem and title_elem.text.strip():
-                        title = title_elem.text.strip()
-                        link = title_elem.get('href')
-                        description = desc_elem.text.strip() if desc_elem else ""
-                        results.append({"title": title, "link": link, "description": description})
-                if len(results) >= limit: break
-            except Exception:
-                break
         return results[:limit]
 
 def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, limit, start_date, end_date, sort_method):
@@ -366,13 +335,15 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
     }
 
     combined_news_pool = []
-    effective_regions = selected_regions if selected_regions else ["전체"]
+    seen_links = set()
 
     for portal_name in selected_portals:
-        fetch_func = portal_methods[portal_name]
-        news_pool = fetch_func(keyword, start_date, end_date, limit=200, sort_method=sort_method)
+        fetch_func = portal_methods.get(portal_name)
+        if not fetch_func:
+            continue
+            
+        news_pool = fetch_func(keyword, start_date, end_date, limit=100, sort_method=sort_method)
 
-        seen_links = set()
         for news in news_pool:
             matched_region = None
             if not selected_regions:
@@ -390,41 +361,13 @@ def fetch_single_keyword(keyword, selected_portals, selected_regions, scraper, l
                 combined_news_pool.append(news_copy)
                 seen_links.add(news['link'])
 
-    urgent_news = []
-    normal_news_by_portal = {p: [] for p in selected_portals}
+    # 긴급 기사 우선 정렬
+    urgent_news = [n for n in combined_news_pool if any(w in n['title'] for w in ["속보", "긴급", "단독"])]
+    normal_news = [n for n in combined_news_pool if n not in urgent_news]
 
-    for news in combined_news_pool:
-        if any(w in news['title'] for w in ["속보", "긴급", "단독"]):
-            urgent_news.append(news)
-        else:
-            normal_news_by_portal[news['portal']].append(news)
-
-    balanced_normal_by_portal = {}
-    for p in selected_portals:
-        region_dict = {r: [] for r in effective_regions}
-        for n in normal_news_by_portal[p]:
-            if n['region'] in region_dict:
-                region_dict[n['region']].append(n)
-
-        p_mixed = []
-        max_len = max((len(v) for v in region_dict.values()), default=0)
-        for i in range(max_len):
-            for r in effective_regions:
-                if i < len(region_dict[r]):
-                    p_mixed.append(region_dict[r][i])
-        balanced_normal_by_portal[p] = p_mixed
-
-    mixed_normal = []
-    max_p_len = max((len(v) for v in balanced_normal_by_portal.values()), default=0)
-    for i in range(max_p_len):
-        for p in selected_portals:
-            if i < len(balanced_normal_by_portal[p]):
-                mixed_normal.append(balanced_normal_by_portal[p][i])
-
-    return (urgent_news + mixed_normal)[:limit]
+    return (urgent_news + normal_news)[:limit]
 
 def send_telegram_message(token, chat_id, text):
-    """일반 텍스트 텔레그램 메시지 전송"""
     if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -441,7 +384,6 @@ def send_telegram_message(token, chat_id, text):
         return None
 
 def send_telegram_photo(token, chat_id, photo_url, caption):
-    """지진 지도 이미지와 함께 텔레그램 사진 메시지 전송 (실패 시 텍스트 전송 대체)"""
     if not token or not chat_id:
         return None
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
@@ -460,14 +402,13 @@ def send_telegram_photo(token, chat_id, photo_url, caption):
     return send_telegram_message(token, chat_id, caption)
 
 def format_eqk_time(raw_time_str):
-    """'20260827123000' 형태의 기상청 날짜 포맷"""
     s = str(raw_time_str).strip()
     if len(s) >= 12:
         return f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}" + (f":{s[12:14]}" if len(s) >= 14 else "")
     return s
 
 # ==========================================
-# 🕒 날짜 계산 (전역 범위 보장)
+# 🕒 날짜 계산
 # ==========================================
 kst = datetime.timezone(datetime.timedelta(hours=9))
 today_kst = datetime.datetime.now(kst).date()
@@ -478,7 +419,7 @@ today_kst = datetime.datetime.now(kst).date()
 st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국내 지진 모니터링</div>", unsafe_allow_html=True)
 
 if st.session_state.run_search:
-    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 국내 신규 지진 발생 시 진앙 위치도와 함께 텔레그램 속보가 단독 즉시 전송됩니다.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 신규 국내 지진 발생 시 텔레그램 속보가 즉시 전송되며 뉴스가 실시간 갱신됩니다.</div>", unsafe_allow_html=True)
 else:
     st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
@@ -488,7 +429,7 @@ else:
 with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
-        selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], key="selected_portals_key")
+        selected_portals = st.multiselect("검색 포털", ["네이버", "구글", "다음"], default=["네이버", "구글", "다음"], key="selected_portals_key")
     with col2:
         all_regions = ["서울", "경기", "인천", "강원", "대전", "충남", "충북", "세종", "부산", "울산", "대구", "경북", "경남", "전남", "전북", "광주", "제주"]
         selected_regions = st.multiselect("검색 지역 (비워두면 전체 지역 검색)", all_regions, key="selected_regions_key")
@@ -503,7 +444,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     with col_sort:
         sort_combo = st.selectbox("정렬 기준", ["중요도순", "최신순"], key="sort_combo_key")
     with col5:
-        period_combo = st.selectbox("검색 기간", ["오늘", "일주일", "한달", "일년", "기간 선택"], key="period_combo_key")
+        period_combo = st.selectbox("검색 기간", ["일주일", "오늘", "한달", "일년", "기간 선택"], key="period_combo_key")
 
     col6, col7, col8 = st.columns([3, 1.5, 1.5])
     with col6:
@@ -630,7 +571,7 @@ if st.session_state.run_search:
                     st.toast(f"⚡ 기상청 국내 지진 속보(지도 포함) 발송 완료: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 수집 및 정각 발송 (날짜 안전 보장)
+    # 📰 [2] 뉴스 수집 및 정각 발송
     # ----------------------------------------------------
     do_news_crawl = False
     send_scheduled_news = False
@@ -660,25 +601,24 @@ if st.session_state.run_search:
 
         # 검색 시작일 및 종료일 안전 보장
         if 'start_date' not in locals():
-            start_date = today_kst
+            start_date = today_kst - datetime.timedelta(days=7)
         if 'end_date' not in locals():
             end_date = today_kst
 
         results_dict = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, active_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
             for future in concurrent.futures.as_completed(future_to_kw):
                 kw = future_to_kw[future]
                 try:
                     results_dict[kw] = future.result()
                 except Exception:
-                    pass
+                    results_dict[kw] = []
 
         st.session_state.cached_results = results_dict
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        # 오직 정각일 때만 뉴스 전송
         if send_scheduled_news:
             news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
             for kw in keywords:
