@@ -580,7 +580,7 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 
     st.markdown("#### 📱 텔레그램 연동 상태")
     auto_tele_check = st.checkbox("⏰ 매 시간 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 신규 지진 속보**는 신규 지진 발생 시에만 즉시 발송되며, **뉴스**는 아침 8시~저녁 6시 매시간 '정각(00분)'에만 1회 자동 발송됩니다.")
+    st.caption("※ **기상청 국내 신규 지진 속보**는 신규 지진 발생 시에만 즉시 발송되며, **뉴스**는 아침 8시~저녁 6시 매시간 '정각(00분)'에 원래 입력하신 검색어 순서대로 자동 발송됩니다.")
 
     st.write("")
 
@@ -637,7 +637,7 @@ if st.session_state.run_search:
     st.session_state.cached_earthquake = current_history
     sent_set = st.session_state.get('sent_eqk_set', set())
 
-    # 발송 이력이 전혀 없는 '새로운 지진'만 단독 발송 (단순 접속 시에는 발송되지 않음)
+    # 발송 이력이 전혀 없는 '새로운 지진'만 단독 발송
     if tele_token and tele_chat_id and fetched_eqks:
         for eq in fetched_eqks:
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
@@ -703,6 +703,7 @@ if st.session_state.run_search:
             st.error("검색어를 입력해주세요.")
             st.stop()
 
+        # 원본 입력 키워드 순서 보존
         raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
         keywords = []
         for k in raw_keywords:
@@ -715,21 +716,23 @@ if st.session_state.run_search:
         if 'end_date' not in locals():
             end_date = today_kst
 
+        # 병렬 수집 후 원본 keywords 순서대로 딕셔너리에 매핑하여 순서 뒤섞임 방지
         results_dict = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_kw = {executor.submit(fetch_single_keyword, kw, selected_portals, selected_regions, scraper, display_limit, start_date, end_date, sort_method_val): kw for kw in keywords}
-            for future in concurrent.futures.as_completed(future_to_kw):
-                kw = future_to_kw[future]
+            for kw in keywords:
+                # 등록된 작업 객체를 찾아 순서대로 결과 회수
+                target_future = [f for f, k in future_to_kw.items() if k == kw][0]
                 try:
-                    results_dict[kw] = future.result()
-                except Exception as e:
+                    results_dict[kw] = target_future.result()
+                except Exception:
                     results_dict[kw] = []
 
         st.session_state.cached_results = results_dict
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        # 오직 정각(00분) 조건이 성립했을 때만 전송 실행
+        # 오직 정각(00분) 조건이 성립했을 때만 전송 실행 (원본 순서대로 조립)
         if send_scheduled_news:
             news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M')})\n\n"
             for kw in keywords:
@@ -803,7 +806,7 @@ if st.session_state.run_search:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 뉴스 카드 그리드
+    # 뉴스 카드 그리드 (원본 키워드 순서대로 출력)
     num_kw = len(cached_keywords)
     columns_per_row = 3
     for i in range(0, num_kw, columns_per_row):
@@ -836,7 +839,7 @@ if st.session_state.run_search:
     st.markdown("---")
 
     # ==========================================
-    # 📲 텔레그램 수동 발송 컨트롤
+    # 📲 텔레그램 수동 발송 컨트롤 (원본 키워드 순서 보장)
     # ==========================================
     col_t1, col_t2 = st.columns(2)
     
