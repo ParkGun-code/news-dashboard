@@ -24,6 +24,7 @@ st.set_page_config(page_title="실시간 뉴스 & 기상청 국내 지진 모니
 STATE_FILE = "app_state.json"
 SENT_EQK_FILE = "sent_earthquakes.json"
 EQK_HISTORY_FILE = "earthquake_history.json"
+SENT_LOG_FILE = "tele_sent_log.json"
 
 def load_app_state():
     if os.path.exists(STATE_FILE):
@@ -85,6 +86,22 @@ def save_eqk_history(history_list):
     except Exception:
         pass
 
+def get_last_news_sent_time():
+    if os.path.exists(SENT_LOG_FILE):
+        try:
+            with open(SENT_LOG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f).get("last_news_hour", "")
+        except Exception:
+            pass
+    return ""
+
+def set_last_news_sent_time(hour_str):
+    try:
+        with open(SENT_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump({"last_news_hour": hour_str}, f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
 # --- 세션 스토리지 초기화 ---
 if 'initialized' not in st.session_state:
     saved = load_app_state()
@@ -104,7 +121,6 @@ if 'initialized' not in st.session_state:
     st.session_state.cached_keywords = []
     st.session_state.cached_earthquake = load_eqk_history()
     st.session_state.sent_eqk_set = load_sent_eqk()
-    st.session_state.last_tele_hour = None
     st.session_state.initialized = True
 
 if 'sent_eqk_set' not in st.session_state:
@@ -261,7 +277,7 @@ class NewsScraper:
         clean_kw = keyword.replace('&', ' OR ').replace('|', ' OR ')
         before_date = end_date + datetime.timedelta(days=1)
         query = f"{clean_kw} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
-        encoded_query = urllib.parse.quote(clean_kw)
+        encoded_query = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
         feed = feedparser.parse(url)
@@ -563,8 +579,8 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
     tele_chat_id = "-1003880927818"
 
     st.markdown("#### 📱 텔레그램 연동 상태")
-    auto_tele_check = st.checkbox("⏰ 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 신규 지진 속보**는 위 정각 설정과 무관하게 30초 주기로 자동 감지되어 진앙 지도와 함께 텔레그램으로 즉시 단독 전송됩니다.")
+    auto_tele_check = st.checkbox("⏰ 매 시간 정각 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
+    st.caption("※ **기상청 국내 신규 지진 속보**는 신규 지진 발생 시에만 즉시 발송되며, **뉴스**는 아침 8시~저녁 6시 매시간 '정각(00분)'에만 1회 자동 발송됩니다.")
 
     st.write("")
 
@@ -590,8 +606,8 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 if st.session_state.run_search:
     now_time = datetime.datetime.now(kst)
 
-    # 30초 주기로 백그라운드 자동 갱신
-    st_autorefresh(interval=30 * 1000, key="eqk_realtime_poller")
+    # 60초(1분) 주기로 감시 폴링
+    st_autorefresh(interval=60 * 1000, key="eqk_realtime_poller")
 
     scraper = NewsScraper(
         naver_client_id="5p3Vuu15J3_qo3MMGOLl", 
@@ -599,7 +615,7 @@ if st.session_state.run_search:
     )
 
     # ----------------------------------------------------
-    # 🚨 [1] 최근 3건 유지 및 신규 발생 지진 단독 전송 로직
+    # 🚨 [1] 신규 지진 감지 시에만 단독 즉시 전송
     # ----------------------------------------------------
     fetched_eqks = scraper.fetch_kma_domestic_earthquakes()
     current_history = load_eqk_history()
@@ -621,7 +637,7 @@ if st.session_state.run_search:
     st.session_state.cached_earthquake = current_history
     sent_set = st.session_state.get('sent_eqk_set', set())
 
-    # 텔레그램 발송은 '오직 새롭게 수집된 미발송 지진'만 단독 전송
+    # 발송 이력이 전혀 없는 '새로운 지진'만 단독 발송 (단순 접속 시에는 발송되지 않음)
     if tele_token and tele_chat_id and fetched_eqks:
         for eq in fetched_eqks:
             eq_id = f"{eq.get('tmEqk')}_{eq.get('loc')}_{eq.get('mt')}"
@@ -655,18 +671,22 @@ if st.session_state.run_search:
                     st.toast(f"⚡ 신규 국내 지진 속보 단독 발송: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 수집 및 정각 발송
+    # 📰 [2] 뉴스 수집 및 '매 시간 정각(00분)' 단독 발송
     # ----------------------------------------------------
     do_news_crawl = False
     send_scheduled_news = False
-    curr_hour = now_time.hour
+    
+    current_date_hour = now_time.strftime("%Y%m%d_%H")
+    last_news_sent = get_last_news_sent_time()
 
+    # 오직 아침 8시 ~ 저녁 6시 사이 '00분(정각)'에만 정기 발송 플래그 활성화
     if auto_tele_check and tele_token and tele_chat_id:
-        if 8 <= curr_hour <= 18:
-            if st.session_state.last_tele_hour != curr_hour:
+        if 8 <= now_time.hour <= 18 and now_time.minute == 0:
+            if last_news_sent != current_date_hour:
                 send_scheduled_news = True
                 do_news_crawl = True 
 
+    # 대시보드 화면용 뉴스 크롤링 주기 체크
     if st.session_state.last_fetch_time is None:
         do_news_crawl = True
     elif not send_scheduled_news and refresh_minutes > 0:
@@ -709,8 +729,9 @@ if st.session_state.run_search:
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
+        # 오직 정각(00분) 조건이 성립했을 때만 전송 실행
         if send_scheduled_news:
-            news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M:%S')})\n\n"
+            news_msg_body = f"📰 <b>[정각 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M')})\n\n"
             for kw in keywords:
                 news_list = results_dict.get(kw, [])
                 news_msg_body += f"📂 <b>[{kw}]</b>\n"
@@ -724,8 +745,9 @@ if st.session_state.run_search:
                     news_msg_body += f"{urgent} {prefix} <a href='{news['link']}'>{safe_title}</a>\n"
                 news_msg_body += "\n"
 
-            send_telegram_message(tele_token, tele_chat_id, news_msg_body)
-            st.session_state.last_tele_hour = curr_hour
+            res = send_telegram_message(tele_token, tele_chat_id, news_msg_body)
+            if res and res.status_code == 200:
+                set_last_news_sent_time(current_date_hour)
 
     # ----------------------------------------------------
     # 🖥️ [3] 대시보드 화면 렌더링
@@ -736,7 +758,7 @@ if st.session_state.run_search:
     last_fetch_time = st.session_state.get('last_fetch_time')
     current_time_str = last_fetch_time.strftime('%Y-%m-%d %H:%M:%S') if last_fetch_time else "방금"
 
-    st.caption(f"⚡ 기상청 국내 지진 실시간 감시: 30초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
+    st.caption(f"⚡ 기상청 국내 지진 실시간 감시: 60초 주기 가동 중 | 📰 최근 뉴스 수집: {current_time_str}")
 
     # 기상청 국내 지진 현황 배너 (최신 3건 상시 표출)
     with st.container(border=True):
@@ -814,7 +836,7 @@ if st.session_state.run_search:
     st.markdown("---")
 
     # ==========================================
-    # 📲 텔레그램 발송 컨트롤 (뉴스 수동 전송 & 지진 단독 테스트 발송)
+    # 📲 텔레그램 수동 발송 컨트롤
     # ==========================================
     col_t1, col_t2 = st.columns(2)
     
