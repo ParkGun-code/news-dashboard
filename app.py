@@ -277,7 +277,7 @@ class NewsScraper:
         clean_kw = keyword.replace('&', ' OR ').replace('|', ' OR ')
         before_date = end_date + datetime.timedelta(days=1)
         query = f"{clean_kw} after:{start_date.strftime('%Y-%m-%d')} before:{before_date.strftime('%Y-%m-%d')}"
-        encoded_query = urllib.parse.quote(clean_kw)
+        encoded_query = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
 
         feed = feedparser.parse(url)
@@ -506,7 +506,7 @@ st.markdown("<div class='main-header'>실시간 사건·사고 & 기상청 국�
 if st.session_state.run_search:
     st.markdown("<div class='sub-header'>🟢 <b>실시간 감시 가동 중:</b> 선택 지역 뉴스 정밀 매칭 및 신규 지진 발생 시 텔레그램 속보가 단독 즉시 전송됩니다.</div>", unsafe_allow_html=True)
 else:
-    st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정각 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>※ 실시간 지진 즉시 발송 및 정시 뉴스 발송을 이용하려면 브라우저 창을 닫지 말고 켜두세요.</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 상단 컨트롤 패널
@@ -580,20 +580,20 @@ with st.expander("⚙️ 검색 및 알림 조건 설정", expanded=True):
 
     st.markdown("#### 📱 텔레그램 연동 상태")
     auto_tele_check = st.checkbox("⏰ 매 시간 정시 뉴스 정기 전송 켜기 (아침 8시 ~ 저녁 6시)", key="auto_tele_check_key")
-    st.caption("※ **기상청 국내 신규 지진 속보**는 신규 지진 발생 시에만 즉시 발송되며, **뉴스**는 아침 8시~저녁 6시 매 시간대 진입 시 1회 자동 발송됩니다.")
+    st.caption("※ **기상청 국내 신규 지진 속보**는 신규 지진 발생 시에만 즉시 발송되며, **뉴스**는 아침 8시~저녁 6시 매 시간대 진입 시 원래 입력하신 검색어 순서대로 1회 자동 발송됩니다.")
 
     st.write("")
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        if st.button("🚀 감시 및 모니터링 실행", type="primary", use_container_width=True):
+        if st.button("🚀 감시 및 모니터링 실행", type="primary"):
             st.session_state.run_search = True
             st.session_state.last_fetch_time = None
             save_app_state()
             st.rerun()
 
     with col_btn2:
-        if st.button("🛑 감시 중지 및 초기화", use_container_width=True):
+        if st.button("🛑 감시 중지 및 초기화"):
             st.session_state.run_search = False
             st.session_state.cached_results = {}
             st.session_state.last_fetch_time = None
@@ -671,7 +671,7 @@ if st.session_state.run_search:
                     st.toast(f"⚡ 신규 국내 지진 속보 단독 발송: M{eq.get('mt')} ({eq.get('loc')})", icon="🚨")
 
     # ----------------------------------------------------
-    # 📰 [2] 뉴스 수집 및 '매 시간대 1회' 자동 발송 (타이밍 미스 완벽 방지)
+    # 📰 [2] 뉴스 수집 및 '매 시간대 1회' 자동 발송 (타이밍 미스 방지 및 순서 보장)
     # ----------------------------------------------------
     do_news_crawl = False
     send_scheduled_news = False
@@ -703,6 +703,7 @@ if st.session_state.run_search:
             st.error("검색어를 입력해주세요.")
             st.stop()
 
+        # 원본 입력 키워드 순서 보존
         raw_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
         keywords = []
         for k in raw_keywords:
@@ -730,7 +731,7 @@ if st.session_state.run_search:
         st.session_state.last_fetch_time = now_time
         st.session_state.cached_keywords = keywords
 
-        # 해당 시간대 최초 1회 발송 실행
+        # 해당 시간대 최초 1회 발송 실행 (원본 순서대로 조립)
         if send_scheduled_news:
             news_msg_body = f"📰 <b>[정시 알림] 실시간 뉴스 모니터링</b> ({now_time.strftime('%Y-%m-%d %H:%M')})\n\n"
             for kw in keywords:
@@ -789,7 +790,7 @@ if st.session_state.run_search:
                         )
                         if img_url and isinstance(img_url, str) and img_url.startswith("http"):
                             try:
-                                st.image(img_url, caption="기상청 진앙 위치도", use_container_width=True)
+                                st.image(img_url, caption="기상청 진앙 위치도")
                             except Exception:
                                 pass
                     else:
@@ -804,7 +805,7 @@ if st.session_state.run_search:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 뉴스 카드 그리드
+    # 뉴스 카드 그리드 (원본 키워드 순서대로 출력)
     num_kw = len(cached_keywords)
     columns_per_row = 3
     for i in range(0, num_kw, columns_per_row):
@@ -837,12 +838,12 @@ if st.session_state.run_search:
     st.markdown("---")
 
     # ==========================================
-    # 📲 텔레그램 수동 발송 컨트롤
+    # 📲 텔레그램 수동 발송 컨트롤 (원본 키워드 순서 보장)
     # ==========================================
     col_t1, col_t2 = st.columns(2)
     
     with col_t1:
-        if st.button("📲 현재 수집된 뉴스만 텔레그램으로 수동 전송", use_container_width=True):
+        if st.button("📲 현재 수집된 뉴스만 텔레그램으로 수동 전송"):
             kst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
             if not (8 <= kst_now.hour <= 18):
                 st.warning(f"⏰ 텔레그램 발송은 아침 8시 ~ 저녁 6시 사이에만 가능합니다. (현재 시각: {kst_now.strftime('%H:%M')})")
@@ -869,7 +870,7 @@ if st.session_state.run_search:
                         st.error("❌ 전송 실패")
 
     with col_t2:
-        if st.button("🧪 [테스트] 최근 지진 1건 텔레그램 즉시 발송", use_container_width=True):
+        if st.button("🧪 [테스트] 최근 지진 1건 텔레그램 즉시 발송"):
             if not cached_earthquake:
                 st.warning("⚠️ 발송할 지진 관측 데이터가 없습니다.")
             else:
